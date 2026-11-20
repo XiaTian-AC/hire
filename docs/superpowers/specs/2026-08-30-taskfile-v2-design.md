@@ -1,7 +1,7 @@
 # Taskfile v2 — 语法简化 + TOML 支持 + shell 实例控制 — Design Spec
 
 **Date:** 2026-08-30
-**Status:** 已被 [2026-11-21-tesk-v2-design.md](2026-11-21-tesk-v2-design.md) 取代（本稿全部可行决定被其 §9 吸收，并扩展为多语言架构；本稿不再单独实施）
+**Status:** 已被 [2026-11-21-hire-v2-design.md](2026-11-21-hire-v2-design.md) 取代（本稿全部可行决定被其 §9 吸收，并扩展为多语言架构；本稿不再单独实施）
 **前置:** 基于 [v1 设计规格](2026-08-21-tkx-design.md) 的演进，**破坏性变更**（breaking change）
 **Stack:** Go 1.27 + gopher-lua + BurntSushi/toml（新增，唯一新增依赖）
 
