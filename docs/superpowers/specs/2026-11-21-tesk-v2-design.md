@@ -91,7 +91,7 @@ internal/adapter/
 
 - "全任务皆函数"管线保留（旧 v2 §7.1 方案 1）：三种适配器都产出 `Task{Fn}`，下游 `callTask`/`runtime.Run`/`bg`/`ls`/`help` 不感知适配器差异
 - ExecAdapter 的 `Task.Fn`：拼 `<runtime> <file> __tesk__ run <name>`，`cmd.Env` 追加 `TESK_ARGS`，stdio 继承，非零退出 → 返回 error（与 Lua 任务抛错同构）
-- 嵌套调用（旧 v2 `x.run`）仅存在于 Lua 适配器；外部 taskfile 想复用逻辑自己写函数——契约不做任务间调用（YAGNI）
+- 嵌套调用（旧 v2 `x.run`）仅存在于原生适配器，且**仅同文件**：每个 Lua 文件独立 LState（cwd/全局文件互不污染全局名）；TOML 内联 run 在该 TOML 文件专属 LState 中合成；跨文件不互调（TOML↔Lua 亦然）；外部 taskfile 想复用逻辑自己写函数——契约不做任务间调用（YAGNI）
 
 ## 7. 运行时与编译缓存
 
@@ -108,7 +108,7 @@ return {
 ```
 
 - 扩展名映射（内建）：`.lua`→内嵌、`.toml`→内嵌、`.py`→python、`.js`/`.mjs`→node、`.cpp`/`.cc`→cpp；未注册扩展名 → 报错列出已注册 runtime 与已知扩展名
-- 编译型 runtime：源文件内容 sha256 → `<cachedir>/tesk/cpp/<hash>.exe`（cachedir = `XDG_CACHE_HOME` 或 `%LOCALAPPDATA%`）；命中直接执行；未命中先跑 build 模板（经用户默认 shell；占位符仅 `{out}`/`{src}` 两个）再执行；编译失败 → 报错附编译器完整输出
+- 编译型 runtime：缓存键 = sha256(源文件内容 + "\x00" + 解析后的 build 命令串)——改 flags 即失效 → `<cachedir>/tesk/cpp/<hash>.exe`（cachedir = `XDG_CACHE_HOME` 或 `%LOCALAPPDATA%`）；命中直接执行；未命中先跑 build 模板（经用户默认 shell；占位符仅 `{out}`/`{src}` 两个）再执行；编译失败 → 报错附编译器完整输出
 - 缓存不清理（shortcut: 磁盘增长按源文件数量计，做 `tesk cache clean` 时再升级）
 
 ## 8. 查找链与合并（吸收旧 v2 §8 并泛化）
@@ -120,7 +120,8 @@ return {
   <cwd>/Taskfile.py, <cwd>/Taskfile.js, <cwd>/Taskfile.cpp,
   <全局配置目录>/ 同序五种
 一个都不存在 → 报错列出全部搜索路径
-同名任务后加载者赢 + stderr 警告（含来源文件）
+加载序 = 全局先、cwd 后；同名任务**后者（cwd）赢** + stderr 警告（含来源文件）——旧 v2 §2 已确认决策，上方列表序仅为探测顺序；`shell =` 声明同规则
+查找链固定探测上述五文件；`.mjs`/`.cc` 仅在 --taskfile 显式指定时有效（刻意：自动发现保持短且可预测）
 bstart：解析出的文件列表经环境变量 TESK_FILES（JSON 数组字符串）传给 _run 子进程
   ——顺手修复审计 #1（bstart --taskfile 后台跑错文件）
 ```
@@ -147,6 +148,8 @@ bstart：解析出的文件列表经环境变量 TESK_FILES（JSON 数组字符�
 7. 任务参数名 `shell` 列入保留名，加载期报错（审计 #6）
 8. 顺手清理：ParseDuration 去 Sscanf 重写、删除 TKX_* 死环境回退、`_ = shells`（审计 #7/#8/#10）
 9. 任务名与内建命令撞名时的报错直接提示 `tesk run <name>`（现状藏在 usage 里）
+
+审计编号对照（报告于 2026-11-21 会话交付，未单独入仓库）：#4 → 本节条目 4；#5 → 条目 5 整条修复；#9（Windows tasklist 每实例一次）→ §14 范围外
 
 ## 11. 错误处理总表
 
