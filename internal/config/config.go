@@ -7,6 +7,8 @@ import (
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
+
+	"hire/internal/adapter"
 )
 
 func ConfigDir() (string, error) {
@@ -72,29 +74,39 @@ func DefaultDisplay() Display {
 	}
 }
 
+// loadConfigTable reads dir/config.lua and returns the table it
+// returns, or (nil, nil) when the file is missing or returns nothing.
+func loadConfigTable(dir string) (*lua.LTable, error) {
+	path := filepath.Join(dir, "config.lua")
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	L := lua.NewState()
+	defer L.Close()
+	if err := L.DoFile(path); err != nil {
+		return nil, err
+	}
+	if L.GetTop() == 0 {
+		return nil, nil
+	}
+	tbl, ok := L.Get(-1).(*lua.LTable)
+	if !ok {
+		return nil, fmt.Errorf("config.lua: expected table, got %s", L.Get(-1).Type().String())
+	}
+	return tbl, nil
+}
+
 // Load reads config.lua from dir and returns the parsed options.
 // Missing file returns defaults with no error.
 func Load(dir string) (Display, map[string]string, error) {
 	display := DefaultDisplay()
 	shells := map[string]string{}
-	path := filepath.Join(dir, "config.lua")
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return display, shells, nil
-		}
+	tbl, err := loadConfigTable(dir)
+	if err != nil || tbl == nil {
 		return display, shells, err
-	}
-	L := lua.NewState()
-	defer L.Close()
-	if err := L.DoFile(path); err != nil {
-		return display, shells, err
-	}
-	if L.GetTop() == 0 {
-		return display, shells, nil
-	}
-	tbl, ok := L.Get(-1).(*lua.LTable)
-	if !ok {
-		return display, shells, fmt.Errorf("config.lua: expected table, got %s", L.Get(-1).Type().String())
 	}
 
 	if st, ok := tbl.RawGetString("shells").(*lua.LTable); ok {
@@ -134,6 +146,54 @@ func Load(dir string) (Display, map[string]string, error) {
 func Shells(dir string) (map[string]string, error) {
 	_, shells, err := Load(dir)
 	return shells, err
+}
+
+// Runtimes loads the external-runtime registry from config.lua: string
+// values are interpreter commands, table values carry a compiled build
+// template. Missing file returns an empty registry, no error.
+func Runtimes(dir string) (map[string]adapter.RuntimeSpec, error) {
+	rts := map[string]adapter.RuntimeSpec{}
+	tbl, err := loadConfigTable(dir)
+	if err != nil || tbl == nil {
+		return rts, err
+	}
+	rtv := tbl.RawGetString("runtimes")
+	if rtv == lua.LNil {
+		return rts, nil
+	}
+	rt, ok := rtv.(*lua.LTable)
+	if !ok {
+		return rts, fmt.Errorf("config.lua: 'runtimes' must be a table, got %s", rtv.Type().String())
+	}
+	var failure error
+	rt.ForEach(func(k, v lua.LValue) {
+		if failure != nil {
+			return
+		}
+		name, kok := k.(lua.LString)
+		if !kok {
+			failure = fmt.Errorf("config.lua: runtimes names must be strings")
+			return
+		}
+		switch sv := v.(type) {
+		case lua.LString:
+			if string(sv) == "" {
+				failure = fmt.Errorf("config.lua: runtimes.%s: command must not be empty", string(name))
+				return
+			}
+			rts[string(name)] = adapter.RuntimeSpec{Cmd: string(sv)}
+		case *lua.LTable:
+			build, bok := sv.RawGetString("build").(lua.LString)
+			if !bok || string(build) == "" {
+				failure = fmt.Errorf("config.lua: runtimes.%s: table form requires a non-empty build = \"...\" with {out}/{src}", string(name))
+				return
+			}
+			rts[string(name)] = adapter.RuntimeSpec{Build: string(build)}
+		default:
+			failure = fmt.Errorf("config.lua: runtimes.%s must be a command string or { build = \"...\" }", string(name))
+		}
+	})
+	return rts, failure
 }
 
 // FormatDuration renders a duration in hire's compact form: "0", "30m",
