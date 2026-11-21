@@ -75,27 +75,30 @@ func TestIntegrationFlow(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", cfgDir)
 	t.Setenv("XDG_DATA_HOME", dataDir)
 
-	taskfile := `return {
-  echo = function(ctx) ctx:echo("hello from echo task") end,
-  quick = function(ctx)
-    ctx:sh("echo line1")
-    ctx:sh("echo line2")
-    ctx:sh("echo line3")
-  end,
-  longrun = function(ctx)
-    ctx:sh("echo will-sleep")
-    if ctx:os() == "windows" then
-      ctx:sh("Start-Sleep -Seconds 30")
-    else
-      ctx:sh("sleep 30")
-    end
-  end,
-  tagged = {
-    desc = "echo the tag",
-    args = { tag = { type = "string", required = true, desc = "a tag" } },
-    run = function(ctx, args) ctx:echo("tag=" .. args.tag) end,
-  },
-}`
+	taskfile := `
+echo = function() x.echo("hello from echo task") end
+
+quick = function()
+  x.sh("echo line1")
+  x.sh("echo line2")
+  x.sh("echo line3")
+end
+
+longrun = function()
+  x.sh("echo will-sleep")
+  if x.os() == "windows" then
+    x.sh("Start-Sleep -Seconds 30")
+  else
+    x.sh("sleep 30")
+  end
+end
+
+tagged = task {
+  desc = "echo the tag",
+  args = { tag = req "a tag" },
+  run = function(args) x.echo("tag=" .. args.tag) end,
+}
+`
 	tfDir := filepath.Join(cfgDir, "hire")
 	os.MkdirAll(tfDir, 0o755)
 	os.WriteFile(filepath.Join(tfDir, "Taskfile.lua"), []byte(taskfile), 0o644)

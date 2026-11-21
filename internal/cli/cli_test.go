@@ -54,24 +54,26 @@ func TestRunVersion(t *testing.T) {
 }
 
 func TestRunLs(t *testing.T) {
-	d, out, _ := setupEnv(t, `return {
-  build = function(ctx) ctx:sh("cargo build") end,
-  test = { desc = "run tests", run = function(ctx) ctx:sh("cargo test") end },
-}`)
+	d, out, _ := setupEnv(t, `
+build = function() x.sh("cargo build") end
+fmt = "cargo fmt --check"
+check = { "echo step1", "echo step2" }
+test = task { desc = "run tests", run = function() x.sh("cargo test") end }
+`)
 	code := Run([]string{"ls"}, d)
 	if code != 0 {
 		t.Errorf("ls: code = %d", code)
 	}
 	s := out.String()
-	if !strings.Contains(s, "build") || !strings.Contains(s, "test") || !strings.Contains(s, "run tests") {
-		t.Errorf("ls output = %q", s)
+	for _, want := range []string{"build", "fmt", "check", "test", "run tests"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("ls output %q missing %q", s, want)
+		}
 	}
 }
 
 func TestRunTask(t *testing.T) {
-	d, out, _ := setupEnv(t, `return {
-  hello = function(ctx) ctx:echo("task ran") end,
-}`)
+	d, out, _ := setupEnv(t, `hello = function() x.echo("task ran") end`)
 	code := Run([]string{"hello"}, d)
 	if code != 0 {
 		t.Errorf("hello: code = %d", code)
@@ -82,11 +84,9 @@ func TestRunTask(t *testing.T) {
 }
 
 func TestRunTaskWithArgs(t *testing.T) {
-	d, out, _ := setupEnv(t, `return {
-  echo = {
-    args = { msg = { type = "string", required = true } },
-    run = function(ctx, args) ctx:echo("got=" .. args.msg) end,
-  },
+	d, out, _ := setupEnv(t, `echo = task {
+  args = { msg = req "the message" },
+  run = function(args) x.echo("got=" .. args.msg) end,
 }`)
 	code := Run([]string{"echo", "--msg", "hello"}, d)
 	if code != 0 {
@@ -98,7 +98,7 @@ func TestRunTaskWithArgs(t *testing.T) {
 }
 
 func TestRunTaskNotFound(t *testing.T) {
-	d, _, errOut := setupEnv(t, `return { a = function(ctx) end }`)
+	d, _, errOut := setupEnv(t, `a = function() end`)
 	code := Run([]string{"nope"}, d)
 	if code != 1 || !strings.Contains(errOut.String(), "not found") {
 		t.Errorf("nope: code=%d err=%q", code, errOut.String())
@@ -106,14 +106,10 @@ func TestRunTaskNotFound(t *testing.T) {
 }
 
 func TestHelpTask(t *testing.T) {
-	d, out, _ := setupEnv(t, `return {
-  release = {
-    desc = "release the project",
-    args = {
-      tag = { type = "string", required = true, desc = "version tag" },
-    },
-    run = function(ctx, args) end,
-  },
+	d, out, _ := setupEnv(t, `release = task {
+  desc = "release the project",
+  args = { tag = req "version tag" },
+  run = function(args) end,
 }`)
 	code := Run([]string{"help", "release"}, d)
 	if code != 0 {
@@ -310,14 +306,14 @@ func TestArgsHint(t *testing.T) {
 }
 
 func TestLsShowsRequiredArgs(t *testing.T) {
-	d, out, _ := setupEnv(t, `return {
-  release = {
-    desc = "release it",
-    args = { tag = { type = "string", required = true } },
-    run = function(ctx, args) end,
-  },
-  plain = function(ctx) end,
-}`)
+	d, out, _ := setupEnv(t, `
+release = task {
+  desc = "release it",
+  args = { tag = req "" },
+  run = function() end,
+}
+plain = function() end
+`)
 	code := Run([]string{"ls"}, d)
 	if code != 0 {
 		t.Fatalf("ls exit = %d", code)
@@ -326,7 +322,7 @@ func TestLsShowsRequiredArgs(t *testing.T) {
 	if !strings.Contains(s, "--tag (required)") {
 		t.Errorf("ls output should mark required arg: %q", s)
 	}
-	if strings.Contains(s, "plain  ") && strings.Contains(strings.Split(s, "\n")[strings.Index(s, "plain")], "[args") {
+	if strings.Contains(strings.Split(s, "\n")[strings.Index(s, "plain")], "[args") {
 		t.Errorf("task without args should not have args hint")
 	}
 }
@@ -347,14 +343,10 @@ func TestExtractTaskfile(t *testing.T) {
 }
 
 func TestRunWithTaskfileOverride(t *testing.T) {
-	d, out, errOut := setupEnv(t, `return {
-  global_only = function(ctx) ctx:echo("from-global") end,
-}`)
+	d, out, errOut := setupEnv(t, `global_only = function() x.echo("from-global") end`)
 	localDir := t.TempDir()
 	localTF := filepath.Join(localDir, "My.lua")
-	os.WriteFile(localTF, []byte(`return {
-  local_task = function(ctx) ctx:echo("from-local") end,
-}`), 0o644)
+	os.WriteFile(localTF, []byte(`local_task = function() x.echo("from-local") end`), 0o644)
 
 	code := Run([]string{"--taskfile", localTF, "local_task"}, d)
 	if code != 0 || !strings.Contains(out.String(), "from-local") {

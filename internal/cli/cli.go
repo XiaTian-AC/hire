@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"hire/internal/adapter"
 	"hire/internal/argparse"
 	"hire/internal/bg"
 	"hire/internal/config"
 	"hire/internal/runtime"
-	"hire/internal/taskfile"
 )
 
 type Deps struct {
@@ -137,7 +137,7 @@ See config.lua for display options and shell registry.
 `, tfPath, cfgDir)
 }
 
-func loadTaskfile(d Deps) (*taskfile.File, map[string]string, error) {
+func loadTaskfile(d Deps) (*adapter.Chain, map[string]string, error) {
 	cfgDir, err := config.ConfigDir()
 	if err != nil {
 		return nil, nil, err
@@ -153,11 +153,12 @@ func loadTaskfile(d Deps) (*taskfile.File, map[string]string, error) {
 			return nil, nil, err
 		}
 	}
-	f, err := taskfile.Load(tfPath)
+	var f *adapter.File
+	f, err = adapter.LoadLua(tfPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	return f, shells, nil
+	return adapter.NewChain(f), shells, nil
 }
 
 func loadDisplay(d Deps) (config.Display, error) {
@@ -207,24 +208,24 @@ func extractTaskfile(argv []string) (string, []string) {
 }
 
 func cmdLs(d Deps) int {
-	f, _, err := loadTaskfile(d)
+	c, _, err := loadTaskfile(d)
 	if err != nil {
 		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
-	defer f.Close()
-	if len(f.Order) == 0 {
+	defer c.Close()
+	if len(c.Order) == 0 {
 		fmt.Fprintln(d.Stdout, "no tasks defined")
 		return 0
 	}
 	maxLen := 0
-	for _, name := range f.Order {
+	for _, name := range c.Order {
 		if len(name) > maxLen {
 			maxLen = len(name)
 		}
 	}
-	for _, name := range f.Order {
-		task := f.Tasks[name]
+	for _, name := range c.Order {
+		task := c.Tasks[name]
 		desc := task.Desc
 		if argsHint := argsHint(task.Args); argsHint != "" {
 			desc = desc + "  " + argsHint
@@ -257,13 +258,13 @@ func argsHint(specs map[string]argparse.Spec) string {
 func cmdRunTask(argv []string, d Deps) int {
 	name := argv[0]
 	shellName, taskArgs := extractShell(argv[1:])
-	f, shells, err := loadTaskfile(d)
+	c, shells, err := loadTaskfile(d)
 	if err != nil {
 		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
-	defer f.Close()
-	task, ok := f.Get(name)
+	defer c.Close()
+	task, ok := c.Tasks[name]
 	if !ok {
 		fmt.Fprintf(d.Stderr, "hire: task %q not found; run 'hire ls'\n", name)
 		return 1
@@ -273,8 +274,8 @@ func cmdRunTask(argv []string, d Deps) int {
 		fmt.Fprintf(d.Stderr, "hire: task %q: %v\n", name, err)
 		return 1
 	}
-	argsTable := argparse.ToLuaTable(f.L, parsed)
-	err = runtime.Run(f, name, argsTable, runtime.Options{
+	argsTable := argparse.ToLuaTable(c.FileOf(task).L, parsed)
+	err = runtime.Run(c, name, argsTable, runtime.Options{
 		ShellName: shellName, Registry: shells,
 		Stdout: d.Stdout, Stderr: d.Stderr, Stdin: d.Stdin,
 	})
@@ -288,13 +289,13 @@ func cmdRunTask(argv []string, d Deps) int {
 func cmdBstart(argv []string, d Deps) int {
 	name := argv[0]
 	shellName, taskArgs := extractShell(argv[1:])
-	f, shells, err := loadTaskfile(d)
+	c, shells, err := loadTaskfile(d)
 	if err != nil {
 		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
-	defer f.Close()
-	task, ok := f.Get(name)
+	defer c.Close()
+	task, ok := c.Tasks[name]
 	if !ok {
 		fmt.Fprintf(d.Stderr, "hire: task %q not found; run 'hire ls'\n", name)
 		return 1
@@ -626,13 +627,13 @@ func cmdInternalRun(argv []string, d Deps) int {
 	if cwd != "" {
 		os.Chdir(cwd)
 	}
-	f, shells, err := loadTaskfile(d)
+	c, shells, err := loadTaskfile(d)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hire: %v\n", err)
 		return 1
 	}
-	defer f.Close()
-	task, ok := f.Get(name)
+	defer c.Close()
+	task, ok := c.Tasks[name]
 	if !ok {
 		fmt.Fprintf(os.Stderr, "hire: task %q not found\n", name)
 		return 1
@@ -642,9 +643,9 @@ func cmdInternalRun(argv []string, d Deps) int {
 		fmt.Fprintf(os.Stderr, "hire: %v\n", err)
 		return 1
 	}
-	argsTable := argparse.ToLuaTable(f.L, parsed)
+	argsTable := argparse.ToLuaTable(c.FileOf(task).L, parsed)
 	exitCode := 0
-	err = runtime.Run(f, name, argsTable, runtime.Options{
+	err = runtime.Run(c, name, argsTable, runtime.Options{
 		ShellName: shellName, Registry: shells,
 		Stdout: os.Stdout, Stderr: os.Stderr, Stdin: nil,
 		Background: true,
@@ -661,13 +662,13 @@ func cmdInternalRun(argv []string, d Deps) int {
 }
 
 func cmdHelpTask(name string, d Deps) int {
-	f, _, err := loadTaskfile(d)
+	c, _, err := loadTaskfile(d)
 	if err != nil {
 		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
-	defer f.Close()
-	task, ok := f.Get(name)
+	defer c.Close()
+	task, ok := c.Tasks[name]
 	if !ok {
 		fmt.Fprintf(d.Stderr, "hire: task %q not found\n", name)
 		return 1
