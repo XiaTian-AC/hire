@@ -55,6 +55,13 @@ func Run(argv []string, d Deps) int {
 		argv = rest
 	}
 
+	if len(argv) == 0 {
+		// `hire --taskfile x.lua` with no command: the flag extraction
+		// emptied argv; behave like bare `hire` (spec §10), which lists
+		// the specified file's tasks.
+		return cmdBare(d)
+	}
+
 	cmd, rest := argv[0], argv[1:]
 	switch cmd {
 	case "help", "--help", "-h":

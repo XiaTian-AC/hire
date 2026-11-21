@@ -377,6 +377,38 @@ func TestExtractTaskfile(t *testing.T) {
 	}
 }
 
+// C1 regression: `hire --taskfile <path>` with no command used to panic
+// (argv[0] on a slice the flag extraction emptied). Both flag forms must
+// behave like bare `hire`: list the override file's tasks plus the
+// usage hint, exit 0 (spec §10).
+func TestBareTaskfileOverrideListsTasks(t *testing.T) {
+	localDir := t.TempDir()
+	localTF := filepath.Join(localDir, "My.lua")
+	if err := os.WriteFile(localTF, []byte(`local_task = function() end`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, out, errOut := setupEnv(t, `global_task = function() end`)
+
+	for _, argv := range [][]string{
+		{"--taskfile", localTF},
+		{"--taskfile=" + localTF},
+	} {
+		out.Reset()
+		errOut.Reset()
+		code := Run(argv, d)
+		if code != 0 {
+			t.Fatalf("Run(%q): code = %d, want 0", argv, code)
+		}
+		s := out.String()
+		if !strings.Contains(s, "local_task") || strings.Contains(s, "global_task") {
+			t.Errorf("Run(%q): should list only the override file's tasks: %q", argv, s)
+		}
+		if !strings.Contains(s, "usage") {
+			t.Errorf("Run(%q): should print the usage hint: %q", argv, s)
+		}
+	}
+}
+
 func TestRunWithTaskfileOverride(t *testing.T) {
 	d, out, errOut := setupEnv(t, `global_only = function() x.echo("from-global") end`)
 	localDir := t.TempDir()

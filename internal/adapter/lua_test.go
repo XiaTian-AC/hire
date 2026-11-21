@@ -261,6 +261,9 @@ func TestArgSpecStrict(t *testing.T) {
 		{`bad = task { args = { tag = { type = 5 } }, run = function() end }`, "'type'"},
 		{`bad = task { args = { tag = { desc = true } }, run = function() end }`, "'desc'"},
 		{`bad = task { args = { tag = { typp = "string" } }, run = function() end }`, "unknown field"},
+		// M1: argparse treats any non-bool type as string, so a bad type
+		// value must be a load-time error, never a silent default.
+		{`bad = task { args = { tag = { type = "integer" } }, run = function() end }`, `invalid type "integer"`},
 	} {
 		err := loadErr(t, tc.src)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {

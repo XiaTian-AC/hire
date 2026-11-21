@@ -178,6 +178,23 @@ desc = "concurrency"
 	}
 }
 
+func TestTOMLBadArgType(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.build]
+cmd = "echo hi"
+[tasks.build.args.count]
+type = "integer"
+`)
+	if err == nil {
+		t.Fatal("expected load error for invalid arg type")
+	}
+	for _, want := range []string{"build", "count", `invalid type "integer"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
 func TestTOMLWhen(t *testing.T) {
 	f := loadTOML(t, fmt.Sprintf(`
 [tasks.here]

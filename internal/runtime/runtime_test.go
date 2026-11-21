@@ -411,6 +411,38 @@ end
 	}
 }
 
+// I2 regression: during export mode the x.ask prompt (and its no-stdin
+// default note) must go to stderr — stdout is the eval payload, and
+// `eval "$(hire t)"` would otherwise execute the prompt text as a
+// command.
+func TestExportAskDivertsToStderr(t *testing.T) {
+	c := writeChain(t, `
+expask = function()
+  x.sh("echo collected", {instance=0})
+  local v = x.ask("Branch name?", "main")
+  x.sh("echo using " .. v, {instance=0})
+end
+`)
+	var out, errb bytes.Buffer
+	err := Run(c, "expask", c.Files[0].L.NewTable(), Options{
+		Stdout: &out, Stderr: &errb, Stdin: nil, // no stdin: deterministic default path
+		Registry: map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr := out.String(), errb.String()
+	if strings.Contains(stdout, "Branch name?") || strings.Contains(stdout, "no stdin") {
+		t.Errorf("stdout = %q, want the ask prompt out of the eval payload", stdout)
+	}
+	if !strings.Contains(stderr, "Branch name?") || !strings.Contains(stderr, "no stdin") {
+		t.Errorf("stderr = %q, want the prompt and default note on stderr during export", stderr)
+	}
+	if !strings.Contains(stdout, "echo collected\necho using main") {
+		t.Errorf("stdout = %q, want a clean eval payload", stdout)
+	}
+}
+
 func TestExportHintOnTTY(t *testing.T) {
 	old := stdoutIsTTY
 	stdoutIsTTY = func() bool { return true }

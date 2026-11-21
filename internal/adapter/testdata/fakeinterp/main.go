@@ -40,6 +40,9 @@ func main() {
 	case "shellarg":
 		fmt.Println(`{"tasks":[{"name":"t","args":{"shell":{"type":"string"}}}]}`)
 		return
+	case "badtype":
+		fmt.Println(`{"tasks":[{"name":"t","args":{"n":{"type":"integer"}}}]}`)
+		return
 	}
 	switch {
 	case verb == "discover":

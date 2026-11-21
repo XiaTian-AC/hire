@@ -36,6 +36,15 @@ func copyTemplate(prebuilt string) string {
 	return `cp '` + prebuilt + `' {out}`
 }
 
+// touchFailTemplate is a portable failing "compiler": it creates {out}
+// and exits 1, mimicking a build interrupted after partial output.
+func touchFailTemplate() string {
+	if runtime.GOOS == "windows" {
+		return `New-Item -ItemType File {out} | Out-Null; exit 1`
+	}
+	return `touch {out}; exit 1`
+}
+
 // cachedPath recomputes the spec'd cache location independently:
 // <base>/hire/<rtName>/sha256(source + "\0" + build).exe
 func cachedPath(t *testing.T, base, rtName string, src []byte, build string) string {
@@ -234,6 +243,43 @@ func TestExecCompiledCache(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("build failure error %q missing %q", err.Error(), want)
 		}
+	}
+}
+
+// I1 regression: a build that touches {out} and then fails must not
+// leave the partial artifact at the cache path — the next LoadExec
+// would stat it as a hit and silently execute the corrupt binary.
+func TestBuildFailureRemovesPartialOutput(t *testing.T) {
+	if _, err := shell.Resolve("", nil); err != nil {
+		t.Skipf("no default shell for build templates: %v", err)
+	}
+	base := spacedCacheDir(t)
+	srcDir := filepath.Join(t.TempDir(), "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(srcDir, "Taskfile.fake")
+	src := []byte("int main() { return 0; }")
+	if err := os.WriteFile(path, src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := adapter.RuntimeSpec{Build: touchFailTemplate()}
+
+	_, err := adapter.LoadExec(path, spec, "fake")
+	if err == nil || !strings.Contains(err.Error(), "build failed") {
+		t.Fatalf("LoadExec (failing build): err = %v, want build failure", err)
+	}
+	exe := cachedPath(t, base, "fake", src, spec.Build)
+	if _, serr := os.Stat(exe); serr == nil {
+		t.Fatalf("partial artifact left at %s: the next load would execute it", exe)
+	}
+
+	// The next load rebuilds rather than hitting a poisoned cache: the
+	// rebuild fails the same way, while a poisoned hit would instead try
+	// to run the 0-byte artifact (a discover/exec error, not "build failed").
+	_, err = adapter.LoadExec(path, spec, "fake")
+	if err == nil || !strings.Contains(err.Error(), "build failed") {
+		t.Errorf("second LoadExec: err = %v, want a rebuild (build failed again)", err)
 	}
 }
 

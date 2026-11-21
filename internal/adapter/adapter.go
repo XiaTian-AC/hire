@@ -19,6 +19,14 @@ var reservedGlobals = map[string]bool{
 	"x": true, "shell": true, "task": true, "req": true, "bool": true,
 }
 
+// validArgType is the args-spec type allow-list shared by every adapter:
+// only "string" and "bool" exist, and argparse silently treats any other
+// value as string — so adapters reject it at load time (CHANGELOG:
+// wrongly-typed args-spec fields are errors in every adapter).
+func validArgType(t string) bool {
+	return t == "string" || t == "bool"
+}
+
 // Task is one runnable task.
 type Task struct {
 	Name, Desc string

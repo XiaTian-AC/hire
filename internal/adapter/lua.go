@@ -290,6 +290,9 @@ func parseArgSpecs(at *lua.LTable, taskName, path string) (map[string]argparse.S
 		if failure == nil && unknown != "" {
 			failure = fmt.Errorf("%s: task %q: arg %q: unknown field %q (use type/required/desc)", path, taskName, string(name), unknown)
 		}
+		if failure == nil && !validArgType(sp.Type) {
+			failure = fmt.Errorf("%s: task %q: arg %q: invalid type %q (use \"string\" or \"bool\")", path, taskName, string(name), sp.Type)
+		}
 		if failure != nil {
 			return
 		}

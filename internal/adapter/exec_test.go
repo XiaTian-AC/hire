@@ -163,6 +163,23 @@ func TestExecDiscoverNonZeroExit(t *testing.T) {
 	}
 }
 
+func TestExecBadArgType(t *testing.T) {
+	t.Setenv("FAKE_MODE", "badtype")
+	path := filepath.Join(t.TempDir(), "Taskfile.fake")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := adapter.LoadExec(path, adapter.RuntimeSpec{Cmd: fakeInterp()}, "fake")
+	if err == nil {
+		t.Fatal("expected error for invalid arg type in discover JSON")
+	}
+	for _, want := range []string{path, `task "t"`, `invalid type "integer"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
 func TestExecReservedNames(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "Taskfile.fake")
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {

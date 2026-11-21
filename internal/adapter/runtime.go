@@ -111,6 +111,9 @@ func ensureCompiled(path, rtName string, spec RuntimeSpec) (string, error) {
 	build.Stdout = &out
 	build.Stderr = &out
 	if err := build.Run(); err != nil {
+		// A possibly-created partial exe must not become a cache hit:
+		// the next load would silently execute the corrupt binary.
+		_ = os.Remove(exe)
 		return "", fmt.Errorf("%s: build failed: %v\ncommand: %s\n%s", path, err, cmdStr, strings.TrimSpace(out.String()))
 	}
 	if _, err := os.Stat(exe); err != nil {

@@ -116,6 +116,9 @@ func buildTOMLTask(L *lua.LState, tt tomlTask, name, path string) (*Task, error)
 		if sp.Type == "" {
 			sp.Type = "string"
 		}
+		if !validArgType(sp.Type) {
+			return nil, fmt.Errorf("%s: task %q: arg %q: invalid type %q (use \"string\" or \"bool\")", path, name, argName, sp.Type)
+		}
 		task.Args[argName] = sp
 	}
 	cmds, hasCmd, err := tomlCmds(tt.Cmd)

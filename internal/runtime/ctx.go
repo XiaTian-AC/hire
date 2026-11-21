@@ -516,9 +516,15 @@ func ctxAsk(L *lua.LState) int {
 	if L.GetTop() >= 2 {
 		def = lua.LVAsString(L.Get(2))
 	}
-	fmt.Fprintf(c.Stdout, "%s ", prompt)
+	w := io.Writer(c.Stdout)
+	if c.exporting {
+		// Export mode: stdout is reserved for the eval payload; a prompt
+		// printed there would be executed by `eval "$(hire t)"`.
+		w = c.Stderr
+	}
+	fmt.Fprintf(w, "%s ", prompt)
 	if c.Background || c.Stdin == nil {
-		fmt.Fprintf(c.Stdout, "[no stdin: using default %q]\n", def)
+		fmt.Fprintf(w, "[no stdin: using default %q]\n", def)
 		L.Push(lua.LString(def))
 		return 1
 	}
