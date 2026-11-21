@@ -64,6 +64,11 @@ func TestRunShFail(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for failing command")
 	}
+	// Lua task errors keep the generic wrap form (only exec-task exits
+	// get the §11 single-name form).
+	if !strings.HasPrefix(err.Error(), `task "fail": `) {
+		t.Errorf("error = %q, want old wrap form %q", err.Error(), `task "fail": ...`)
+	}
 	if !strings.Contains(err.Error(), "exit 3") {
 		t.Errorf("error = %v, want exit code 3", err)
 	}

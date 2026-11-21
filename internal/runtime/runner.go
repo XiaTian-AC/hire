@@ -40,6 +40,12 @@ func Run(c *adapter.Chain, name string, args *lua.LTable, opts Options) error {
 		Background: opts.Background,
 	}
 	if err := callTask(file.L, ctx, task, args); err != nil {
+		// External task exits get the spec §11 single-name form
+		// (`hire: task "x" failed (exit N)`); everything else keeps the
+		// generic wrap so Lua errors display as before.
+		if tee, ok := adapter.AsTaskExitError(err); ok {
+			return fmt.Errorf("task %q failed (exit %d)", name, tee.Code)
+		}
 		return fmt.Errorf("task %q: %v", name, err)
 	}
 	return nil

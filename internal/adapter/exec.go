@@ -146,6 +146,36 @@ func excerpt(s string) string {
 	return s
 }
 
+// TaskExitError marks an external task's non-zero exit so the runner
+// can render the spec §11 single-name form instead of the generic wrap.
+type TaskExitError struct {
+	Name string
+	Code int
+}
+
+func (e *TaskExitError) Error() string {
+	return fmt.Sprintf("failed (exit %d)", e.Code)
+}
+
+// AsTaskExitError digs a *TaskExitError out of a callTask error. The
+// exec closure raises it as a Lua error object, which PCall wraps in
+// *lua.ApiError (no Unwrap method), so plain errors.As can not reach
+// it without this ApiError.Object hop.
+func AsTaskExitError(err error) (*TaskExitError, bool) {
+	var tee *TaskExitError
+	if errors.As(err, &tee) {
+		return tee, true
+	}
+	var ae *lua.ApiError
+	if errors.As(err, &ae) {
+		if ud, ok := ae.Object.(*lua.LUserData); ok {
+			tee, ok := ud.Value.(*TaskExitError)
+			return tee, ok
+		}
+	}
+	return nil, false
+}
+
 // execFn is the task Fn for external taskfiles: re-exec the program with
 // the run verb, HIRE_ARGS from the environment ("{}" when unset),
 // inherited stdio; a non-zero exit becomes a Lua error, isomorphic to
@@ -162,7 +192,12 @@ func execFn(L *lua.LState, prog string, extra []string, name string) *lua.LFunct
 		if err := cmd.Run(); err != nil {
 			var ee *exec.ExitError
 			if errors.As(err, &ee) {
-				L.RaiseError("task %q failed (exit %d)", name, ee.ExitCode())
+				// Raised as a non-string error object: PCall keeps it
+				// as ApiError.Object, and the runner composes §11's
+				// "task <name> failed (exit N)" from it.
+				ud := L.NewUserData()
+				ud.Value = &TaskExitError{Name: name, Code: ee.ExitCode()}
+				L.Error(ud, 1)
 			}
 			L.RaiseError("task %q failed: %v", name, err)
 		}

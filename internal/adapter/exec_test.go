@@ -4,12 +4,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"testing"
 
 	"hire/internal/adapter"
+	"hire/internal/runtime"
 )
 
 // fakeInterp builds the __hire__ contract test double once per test run,
@@ -20,7 +21,7 @@ var fakeInterp = sync.OnceValue(func() string {
 		panic(err)
 	}
 	exe := filepath.Join(dir, "fakeinterp")
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		exe += ".exe"
 	}
 	cmd := exec.Command("go", "build", "-o", exe, "main.go")
@@ -75,12 +76,14 @@ func runEchoBoom(t *testing.T, f *adapter.File) {
 	if string(got) != trickyArgs {
 		t.Errorf("HIRE_ARGS round trip:\n got %q\nwant %q", string(got), trickyArgs)
 	}
-	err = invokeTask(f, "boom")
+	// Spec §11 final form, through the runner wrap: single task name,
+	// exact string (cli later prefixes "hire: ").
+	err = runtime.Run(adapter.NewChain(f), "boom", f.L.NewTable(), runtime.Options{Registry: map[string]string{}})
 	if err == nil {
 		t.Fatal("boom should fail")
 	}
-	if !strings.Contains(err.Error(), `task "boom" failed (exit 3)`) {
-		t.Errorf("boom error = %q, want it to contain %q", err.Error(), `task "boom" failed (exit 3)`)
+	if want := `task "boom" failed (exit 3)`; err.Error() != want {
+		t.Errorf("boom error = %q, want exactly %q", err.Error(), want)
 	}
 }
 
