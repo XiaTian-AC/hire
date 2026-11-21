@@ -127,6 +127,10 @@ release = task {
    （pwsh：`$(if ($?) { $LASTEXITCODE } else { 1 })`），cmdlet 失败不会静默；
    config.lua 注册的第三方 shell 没有脚本化的 stdin 协议，自动降级 one-shot 并
    每任务警告一次。
+6. **pwsh 持久实例是 Windows 专属**。Unix 平台的 pwsh 把 `-Command -` 的 stdin
+   缓冲到 EOF 才整块执行，持久实例会在第一条命令上死锁；非 Windows 平台
+   `shell = "pwsh"` 的持久请求自动降级 one-shot 并每任务警告一次。Unix 默认
+   shell 是 bash，持久语义完整可用。
 
 实例生命周期：任务结束（正常返回 / 抛错 / panic）统一关停全部实例。实例崩溃或
 `exit` 后，下一条命令自动冷重启。

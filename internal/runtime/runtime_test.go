@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -312,6 +313,9 @@ end
 
 func TestPwshPersistentEnv(t *testing.T) {
 	mustShell(t, "pwsh")
+	if runtime.GOOS != "windows" {
+		t.Skip("pwsh persistent instances are Windows-only: pwsh buffers stdin until EOF on Unix")
+	}
 	c := writeChain(t, `
 shell = "pwsh"
 pwshp = function()
@@ -333,6 +337,9 @@ end
 // matching v1 one-shot semantics, and the instance must survive.
 func TestPwshCmdletFailure(t *testing.T) {
 	mustShell(t, "pwsh")
+	if runtime.GOOS != "windows" {
+		t.Skip("pwsh persistent instances are Windows-only: pwsh buffers stdin until EOF on Unix")
+	}
 	c := writeChain(t, `
 shell = "pwsh"
 pwshcmdfail = function() x.sh("Get-DoesNotExist") end

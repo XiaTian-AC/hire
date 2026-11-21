@@ -31,6 +31,9 @@ had no external users):
   external-language ones embed the full contract boilerplate.
 - **Persistent shell instances.** Commands in a task reuse one live shell
   (`cd`/env carry over); cmdlet failures raise via the amended pwsh sentinel.
+  Persistent pwsh is Windows-only — on Unix, pwsh buffers `-Command -` stdin
+  until EOF, so persistent requests degrade to one-shot with a warning
+  (bash/sh persistence is unaffected).
 - **Export mode.** `x.sh(cmd, { instance = 0 })` collects commands for
   `eval "$(hire task)"` / `iex (hire task)`.
 - **Lookup chain + merge.** `Taskfile.{toml,lua,py,js,cpp}` in the working

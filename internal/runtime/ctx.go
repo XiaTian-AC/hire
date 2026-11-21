@@ -247,6 +247,17 @@ func (c *Ctx) runPersistent(L *lua.LState, shellName string, instNum int, cmd st
 		c.runOneShot(L, cmd, shellName, false)
 		return
 	}
+	if shellName == "pwsh" && runtime.GOOS != "windows" {
+		// pwsh -Command - buffers stdin until EOF on Unix, so a persistent
+		// instance would deadlock waiting for its first sentinel. Persistent
+		// pwsh is a Windows-only capability; degrade, warned once per task.
+		if !c.warned {
+			c.warned = true
+			fmt.Fprintf(c.Stderr, "hire: warning: pwsh persistent instances are Windows-only; running one-shot\n")
+		}
+		c.runOneShot(L, cmd, shellName, false)
+		return
+	}
 	if c.instances == nil {
 		c.instances = make(map[instKey]*instance)
 	}
