@@ -109,6 +109,16 @@ func TestParseDurationInvalid(t *testing.T) {
 	}
 }
 
+func TestParseDurationStrict(t *testing.T) {
+	// the strconv rewrite rejects what Sscanf silently accepted:
+	// trailing garbage and negative values
+	for _, in := range []string{"2d3h", "-1h"} {
+		if _, err := ParseDuration(in); err == nil {
+			t.Errorf("expected error for %q", in)
+		}
+	}
+}
+
 func TestLoadDisplayDefaults(t *testing.T) {
 	dir := t.TempDir()
 	disp, shells, err := Load(dir)

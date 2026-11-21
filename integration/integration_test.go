@@ -4,6 +4,7 @@ package integration
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,8 +53,21 @@ func buildBinary(t *testing.T) string {
 
 func runBin(t *testing.T, bin string, args ...string) (string, int) {
 	t.Helper()
+	return runBinOpt(t, bin, "", nil, args...)
+}
+
+// runBinOpt is runBin with an optional working directory and extra
+// environment entries.
+func runBinOpt(t *testing.T, bin, dir string, env []string, args ...string) (string, int) {
+	t.Helper()
 	var out bytes.Buffer
 	cmd := exec.Command(bin, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	err := cmd.Run()
@@ -176,5 +190,69 @@ tagged = task {
 		if strings.Contains(f.Name(), "quick#1") {
 			t.Errorf("old quick#1 log should be rotated, found: %s", f.Name())
 		}
+	}
+}
+
+// TestIntegrationBstartTaskfileHandoff pins audit #1: a task that
+// exists only in a --taskfile file must bstart and run THAT file's
+// version in the background, not whatever the global lookup finds.
+func TestIntegrationBstartTaskfileHandoff(t *testing.T) {
+	bin := buildBinary(t)
+	cfgDir, _ := os.MkdirTemp("", "hire-cfg-")
+	dataDir, _ := os.MkdirTemp("", "hire-data-")
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	t.Setenv("XDG_DATA_HOME", dataDir)
+	tfDir := filepath.Join(cfgDir, "hire")
+	os.MkdirAll(tfDir, 0o755)
+	os.WriteFile(filepath.Join(tfDir, "Taskfile.lua"), []byte(`other = function() x.echo("global-other") end`), 0o644)
+
+	work := t.TempDir()
+	local := filepath.Join(work, "My.lua")
+	os.WriteFile(local, []byte(`special = function() x.echo("from-special-taskfile") end`), 0o644)
+
+	out, code := runBinOpt(t, bin, work, nil, "bstart", "special", "--taskfile", local)
+	if code != 0 || !strings.Contains(out, "started special#1") {
+		t.Fatalf("bstart --taskfile: code=%d out=%q", code, out)
+	}
+
+	// "special" exists only in the --taskfile, so a plain global
+	// lookup (from a directory without taskfiles) must not list it
+	out, _ = runBin(t, bin, "ls")
+	if strings.Contains(out, "special") {
+		t.Errorf("global ls should not list special: %q", out)
+	}
+
+	logPath := filepath.Join(dataDir, "hire", "logs", "special#1.log")
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, err := os.ReadFile(logPath); err == nil && strings.Contains(string(b), "from-special-taskfile") {
+			return // the background child ran the --taskfile version
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	b, _ := os.ReadFile(logPath)
+	t.Fatalf("background child did not run the --taskfile version; log:\n%s", b)
+}
+
+// TestIntegrationRunFilesEnvMissingFile: _run with HIRE_FILES pointing
+// at a vanished taskfile must report the path instead of silently
+// re-probing (which could execute an unrelated global file).
+func TestIntegrationRunFilesEnvMissingFile(t *testing.T) {
+	bin := buildBinary(t)
+	cfgDir, _ := os.MkdirTemp("", "hire-cfg-")
+	dataDir, _ := os.MkdirTemp("", "hire-data-")
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	t.Setenv("XDG_DATA_HOME", dataDir)
+	ghost := filepath.Join(t.TempDir(), "gone.lua")
+	j, err := json.Marshal([]string{ghost})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, code := runBinOpt(t, bin, "", []string{"HIRE_FILES=" + string(j)}, "_run", "ghost", "--id", "ghost#1", "--")
+	if code != 1 {
+		t.Fatalf("_run with missing HIRE_FILES file: code=%d out=%q", code, out)
+	}
+	if !strings.Contains(out, "no Taskfile at") || !strings.Contains(out, ghost) {
+		t.Fatalf("_run missing-file output should name the vanished path: %q", out)
 	}
 }

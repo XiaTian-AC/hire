@@ -2,9 +2,11 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -44,8 +46,7 @@ func Run(argv []string, d Deps) int {
 	}
 
 	if len(argv) == 0 {
-		usage(d.Stdout)
-		return 2
+		return cmdBare(d)
 	}
 
 	if d.TaskfileOverride == "" {
@@ -70,12 +71,14 @@ func Run(argv []string, d Deps) int {
 	case "start", "run":
 		if len(rest) == 0 {
 			fmt.Fprintf(d.Stderr, "hire: usage: hire %s <task> [args]\n", cmd)
+			hintShadowed(cmd, d)
 			return 2
 		}
 		return cmdRunTask(rest, d)
 	case "bstart":
 		if len(rest) == 0 {
 			fmt.Fprintln(d.Stderr, "hire: usage: hire bstart <task> [args]")
+			hintShadowed("bstart", d)
 			return 2
 		}
 		return cmdBstart(rest, d)
@@ -86,15 +89,12 @@ func Run(argv []string, d Deps) int {
 	case "watch":
 		if len(rest) == 0 {
 			fmt.Fprintln(d.Stderr, "hire: usage: hire watch <name>[#N]")
+			hintShadowed("watch", d)
 			return 2
 		}
 		return cmdWatch(rest[0], d)
 	case "stop":
-		if len(rest) == 0 {
-			fmt.Fprintln(d.Stderr, "hire: usage: hire stop <name>[#N]")
-			return 2
-		}
-		return cmdStop(rest[0], d)
+		return cmdStop(rest, d)
 	case "config":
 		return cmdConfig(rest, d)
 	case "_run":
@@ -106,17 +106,50 @@ func Run(argv []string, d Deps) int {
 	return cmdRunTask(argv, d)
 }
 
+// cmdBare handles a bare `hire`: list tasks, then one usage hint line
+// (spec §10 — a discovery command, exit 0; a missing taskfile only
+// downgrades the listing, not the exit code).
+func cmdBare(d Deps) int {
+	c, _, err := loadTaskfile(d)
+	if err == nil {
+		defer c.Close()
+		if len(c.Order) == 0 {
+			fmt.Fprintln(d.Stdout, "no tasks defined")
+		} else {
+			listTasks(c, d.Stdout)
+		}
+	} else {
+		fmt.Fprintln(d.Stderr, "hire:", err)
+	}
+	fmt.Fprintln(d.Stdout, "usage: hire <task> [args] runs a task; hire help lists all commands")
+	return 0
+}
+
+// hintShadowed points at the escape hatch when a task with the same
+// name as a builtin command exists: the builtin wins, so the task is
+// reachable only through `hire run <name>`.
+func hintShadowed(cmd string, d Deps) {
+	c, _, err := loadTaskfile(d)
+	if err != nil {
+		return
+	}
+	defer c.Close()
+	if _, ok := c.Tasks[cmd]; ok {
+		fmt.Fprintf(d.Stderr, "hire: task %q is shadowed by the builtin %q command; use 'hire run %s' to run it\n", cmd, cmd, cmd)
+	}
+}
+
 func usage(out io.Writer) {
 	cfgDir, _ := config.ConfigDir()
-	tfPath, _ := config.TaskfilePath()
-	fmt.Fprintf(out, `hire - task runner (global tasks + background execution)
+	fmt.Fprintf(out, `hire - task runner (any-language taskfiles + background execution)
 
 Usage:
   hire <task> [args]        run a task in the foreground
   hire bstart <task> [args] run a task in the background (detached)
   hire ls                   list tasks
   hire ls-running           list background instances (filtered by display.ls_running.time)
-  hire clean [--all|--older-than <dur>]  remove ended instances (and their logs)
+  hire clean [--all|--older-than <dur>]
+                            remove ended instances (and their logs)
   hire watch <name>[#N]     tail a background instance's log live
   hire stop <name>[#N]      stop background instance(s)
   hire config [section]     show effective config (all | display | shells)
@@ -126,18 +159,69 @@ Usage:
 
 Flags:
   --shell <name>           select shell for this run
-  --taskfile <path>        use a specific Taskfile.lua (instead of the global one)
+  --taskfile <path>        use one specific taskfile (any supported extension)
 
 Files:
-  Taskfile: %s
-  config:   %s/config.lua
+  lookup: Taskfile.{toml,lua,py,js,cpp} in the working directory,
+          then in %s (same-name task: cwd wins)
+  config: %s/config.lua
 
-Tasks are defined in Taskfile.lua under the hire config directory.
-See config.lua for display options and shell registry.
-`, tfPath, cfgDir)
+Tasks are defined in a Taskfile.toml/lua/py/js/cpp in the working
+directory or the hire config directory. Python/JS/C++ taskfiles need a
+matching runtimes entry in config.lua.
+`, cfgDir, cfgDir)
 }
 
-func loadTaskfile(d Deps) (*adapter.Chain, map[string]string, error) {
+// resolveTaskfiles returns the effective taskfile list in LOAD order
+// (global first, cwd last, so a same-name task from cwd wins), or an
+// error listing every probed path when none exists. --taskfile
+// isolates to exactly one file, never merged.
+func resolveTaskfiles(d Deps) ([]string, error) {
+	if d.TaskfileOverride != "" {
+		return []string{d.TaskfileOverride}, nil
+	}
+	cfgDir, err := config.ConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	var load []string
+	seen := map[string]bool{}
+	for _, dir := range []string{cfgDir, cwd} {
+		for _, p := range config.Taskfiles(dir) {
+			abs, err := filepath.Abs(p)
+			if err != nil {
+				abs = p
+			}
+			if seen[abs] || !fileExists(p) {
+				continue
+			}
+			seen[abs] = true
+			load = append(load, p)
+		}
+	}
+	if len(load) == 0 {
+		var probed []string
+		for _, dir := range []string{cwd, cfgDir} { // probe order: cwd first
+			probed = append(probed, config.Taskfiles(dir)...)
+		}
+		return nil, fmt.Errorf("no Taskfile found (probed: %s)", strings.Join(probed, ", "))
+	}
+	return load, nil
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
+// loadChain loads the given files (the extension dispatches the
+// adapter) and merges them in list order. Callers pass globals first
+// so cwd tasks override on name clashes.
+func loadChain(files []string) (*adapter.Chain, map[string]string, error) {
 	cfgDir, err := config.ConfigDir()
 	if err != nil {
 		return nil, nil, err
@@ -146,19 +230,64 @@ func loadTaskfile(d Deps) (*adapter.Chain, map[string]string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	tfPath := d.TaskfileOverride
-	if tfPath == "" {
-		tfPath, err = config.TaskfilePath()
-		if err != nil {
-			return nil, nil, err
+	var rts map[string]adapter.RuntimeSpec
+	for _, p := range files {
+		if isExecExt(filepath.Ext(p)) {
+			rts, err = config.Runtimes(cfgDir)
+			if err != nil {
+				return nil, nil, err
+			}
+			break
 		}
 	}
-	var f *adapter.File
-	f, err = adapter.LoadLua(tfPath)
+	loaded := make([]*adapter.File, 0, len(files))
+	for _, p := range files {
+		f, err := loadOne(p, rts)
+		if err != nil {
+			for _, done := range loaded {
+				done.Close()
+			}
+			return nil, nil, err
+		}
+		loaded = append(loaded, f)
+	}
+	return adapter.NewChain(loaded...), shells, nil
+}
+
+func isExecExt(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".py", ".js", ".mjs", ".cpp", ".cc":
+		return true
+	}
+	return false
+}
+
+// loadOne loads a single taskfile; the extension picks the adapter.
+// .mjs/.cc dispatch too but are reachable only via --taskfile, since
+// the auto-discovery list is the fixed five.
+func loadOne(path string, rts map[string]adapter.RuntimeSpec) (*adapter.File, error) {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".lua":
+		return adapter.LoadLua(path)
+	case ".toml":
+		return adapter.LoadTOML(path)
+	case ".py", ".js", ".mjs", ".cpp", ".cc":
+		spec, name, err := adapter.ResolveRuntime(ext, rts)
+		if err != nil {
+			return nil, err
+		}
+		return adapter.LoadExec(path, spec, name)
+	}
+	return nil, fmt.Errorf("%s: unsupported taskfile extension %q (known: .toml .lua .py .js .cpp; --taskfile also accepts .mjs .cc)", path, ext)
+}
+
+func loadTaskfile(d Deps) (*adapter.Chain, map[string]string, error) {
+	files, err := resolveTaskfiles(d)
 	if err != nil {
 		return nil, nil, err
 	}
-	return adapter.NewChain(f), shells, nil
+	return loadChain(files)
 }
 
 func loadDisplay(d Deps) (config.Display, error) {
@@ -218,6 +347,11 @@ func cmdLs(d Deps) int {
 		fmt.Fprintln(d.Stdout, "no tasks defined")
 		return 0
 	}
+	listTasks(c, d.Stdout)
+	return 0
+}
+
+func listTasks(c *adapter.Chain, out io.Writer) {
 	maxLen := 0
 	for _, name := range c.Order {
 		if len(name) > maxLen {
@@ -230,9 +364,8 @@ func cmdLs(d Deps) int {
 		if argsHint := argsHint(task.Args); argsHint != "" {
 			desc = desc + "  " + argsHint
 		}
-		fmt.Fprintf(d.Stdout, "%-*s  %s\n", maxLen, name, desc)
+		fmt.Fprintf(out, "%-*s  %s\n", maxLen, name, desc)
 	}
-	return 0
 }
 
 func argsHint(specs map[string]argparse.Spec) string {
@@ -255,6 +388,82 @@ func argsHint(specs map[string]argparse.Spec) string {
 	return "[args: " + strings.Join(parts, ", ") + "]"
 }
 
+// setHireArgs publishes the parsed task args for exec-adapter task
+// closures, which re-exec the taskfile program with HIRE_ARGS read
+// from the process environment. Tasks without declared args get {}.
+func setHireArgs(task *adapter.Task, parsed *argparse.Parsed) error {
+	if len(task.Args) == 0 {
+		return os.Setenv("HIRE_ARGS", "{}")
+	}
+	m := make(map[string]any, len(parsed.Flags)+1)
+	for k, v := range parsed.Flags {
+		m[k] = v
+	}
+	if parsed.Positional != nil {
+		m["_"] = parsed.Positional
+	} else {
+		m["_"] = []string{} // marshal as [], not null
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return os.Setenv("HIRE_ARGS", string(b))
+}
+
+// levenshtein is the classic edit distance (byte-wise DP), used only
+// for did-you-mean hints.
+func levenshtein(a, b string) int {
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = min(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
+}
+
+// suggestTask returns a one-line did-you-mean hint when the typed name
+// is within edit distance 2 of a task; ties resolve to the
+// alphabetically first candidate (c.Order is sorted).
+func suggestTask(c *adapter.Chain, name string) string {
+	best, bestDist := "", 3 // > 2: nothing close, no hint
+	for _, n := range c.Order {
+		if d := levenshtein(name, n); d < bestDist {
+			best, bestDist = n, d
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return fmt.Sprintf("hire: did you mean %q?", best)
+}
+
+// hasHelpFlag reports whether --help appears before the -- separator:
+// intercepted before argparse, so it works even for tasks that declare
+// required args (or none at all).
+func hasHelpFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
 func cmdRunTask(argv []string, d Deps) int {
 	name := argv[0]
 	shellName, taskArgs := extractShell(argv[1:])
@@ -267,11 +476,21 @@ func cmdRunTask(argv []string, d Deps) int {
 	task, ok := c.Tasks[name]
 	if !ok {
 		fmt.Fprintf(d.Stderr, "hire: task %q not found; run 'hire ls'\n", name)
+		if hint := suggestTask(c, name); hint != "" {
+			fmt.Fprintln(d.Stderr, hint)
+		}
 		return 1
+	}
+	if hasHelpFlag(taskArgs) {
+		return cmdHelpTask(name, d)
 	}
 	parsed, err := argparse.Parse(taskArgs, task.Args)
 	if err != nil {
 		fmt.Fprintf(d.Stderr, "hire: task %q: %v\n", name, err)
+		return 1
+	}
+	if err := setHireArgs(task, parsed); err != nil {
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	argsTable := argparse.ToLuaTable(c.FileOf(task).L, parsed)
@@ -288,8 +507,14 @@ func cmdRunTask(argv []string, d Deps) int {
 
 func cmdBstart(argv []string, d Deps) int {
 	name := argv[0]
-	shellName, taskArgs := extractShell(argv[1:])
-	c, shells, err := loadTaskfile(d)
+	autoYes, taskArgs := extractYes(argv[1:])
+	shellName, taskArgs := extractShell(taskArgs)
+	files, err := resolveTaskfiles(d)
+	if err != nil {
+		fmt.Fprintln(d.Stderr, "hire:", err)
+		return 1
+	}
+	c, _, err := loadChain(files)
 	if err != nil {
 		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
@@ -298,6 +523,9 @@ func cmdBstart(argv []string, d Deps) int {
 	task, ok := c.Tasks[name]
 	if !ok {
 		fmt.Fprintf(d.Stderr, "hire: task %q not found; run 'hire ls'\n", name)
+		if hint := suggestTask(c, name); hint != "" {
+			fmt.Fprintln(d.Stderr, hint)
+		}
 		return 1
 	}
 	_, err = argparse.Parse(taskArgs, task.Args)
@@ -321,12 +549,17 @@ func cmdBstart(argv []string, d Deps) int {
 			fmt.Fprintf(d.Stdout, "  %s (pid %d, started %s)\n", inst.ID, inst.PID, inst.Started.Format("15:04:05"))
 		}
 		fmt.Fprintln(d.Stdout, "WARNING: same-name instances may conflict (file/port contention, unlocked git operations).")
-		if !confirm("Start another?", d.Stdin, d.Stdout) {
-			fmt.Fprintln(d.Stdout, "aborted")
-			return 0
+		if !autoYes {
+			ok, eof := confirm("Start another?", d.Stdin, d.Stdout)
+			if !ok {
+				fmt.Fprintln(d.Stdout, "aborted")
+				if eof {
+					return 1 // non-interactive stdin: not a soft decline
+				}
+				return 0
+			}
 		}
 	}
-	_ = shells
 	cwd, _ := os.Getwd()
 	inst, err := bg.Start(bg.StartOptions{
 		SelfPath:  d.SelfPath,
@@ -335,6 +568,7 @@ func cmdBstart(argv []string, d Deps) int {
 		ShellName: shellName,
 		CWD:       cwd,
 		DataDir:   dataDir,
+		Files:     files,
 	})
 	if err != nil {
 		fmt.Fprintln(d.Stderr, "hire:", err)
@@ -343,6 +577,25 @@ func cmdBstart(argv []string, d Deps) int {
 	fmt.Fprintf(d.Stdout, "started %s (pid %d)\nlog: %s\nwatch: hire watch %s\nstop:  hire stop %s\n",
 		inst.ID, inst.PID, inst.Log, inst.ID, inst.ID)
 	return 0
+}
+
+// extractYes removes the --yes flag (confirmation bypass) from argv,
+// leaving everything after -- untouched.
+func extractYes(argv []string) (bool, []string) {
+	out := make([]string, 0, len(argv))
+	yes := false
+	for i := 0; i < len(argv); i++ {
+		if argv[i] == "--" {
+			out = append(out, argv[i:]...)
+			return yes, out
+		}
+		if argv[i] == "--yes" {
+			yes = true
+			continue
+		}
+		out = append(out, argv[i])
+	}
+	return yes, out
 }
 
 func cmdLsRunning(d Deps) int {
@@ -414,13 +667,21 @@ func cmdClean(argv []string, d Deps) int {
 		return 1
 	}
 	olderThan := ""
-	for _, a := range argv {
-		if a == "--all" {
+	for i := 0; i < len(argv); i++ {
+		switch {
+		case argv[i] == "--all":
 			olderThan = "0"
-			continue
-		}
-		if strings.HasPrefix(a, "--older-than=") {
-			olderThan = strings.TrimPrefix(a, "--older-than=")
+		case strings.HasPrefix(argv[i], "--older-than="):
+			olderThan = strings.TrimPrefix(argv[i], "--older-than=")
+		case argv[i] == "--older-than":
+			// space form: --older-than <dur>; a missing value must
+			// error, never fall through to clean-all
+			if i+1 >= len(argv) {
+				fmt.Fprintln(d.Stderr, "hire: --older-than requires a duration (e.g. 1h, 2d, 1w)")
+				return 2
+			}
+			olderThan = argv[i+1]
+			i++
 		}
 	}
 	all, err := bg.Snapshot(dataDir)
@@ -488,7 +749,14 @@ func cmdWatch(ref string, d Deps) int {
 	return 0
 }
 
-func cmdStop(ref string, d Deps) int {
+func cmdStop(argv []string, d Deps) int {
+	autoYes, rest := extractYes(argv)
+	if len(rest) == 0 {
+		fmt.Fprintln(d.Stderr, "hire: usage: hire stop <name>[#N] [--yes]")
+		hintShadowed("stop", d)
+		return 2
+	}
+	ref := rest[0]
 	dataDir, err := config.DataDir()
 	if err != nil {
 		fmt.Fprintln(d.Stderr, "hire:", err)
@@ -532,9 +800,15 @@ func cmdStop(ref string, d Deps) int {
 			for _, inst := range targets {
 				fmt.Fprintf(d.Stdout, "  %s (pid %d)\n", inst.ID, inst.PID)
 			}
-			if !confirm("Stop all?", d.Stdin, d.Stdout) {
-				fmt.Fprintln(d.Stdout, "aborted")
-				return 0
+			if !autoYes {
+				ok, eof := confirm("Stop all?", d.Stdin, d.Stdout)
+				if !ok {
+					fmt.Fprintln(d.Stdout, "aborted")
+					if eof {
+						return 1 // non-interactive stdin: not a soft decline
+					}
+					return 0
+				}
 			}
 		}
 	}
@@ -601,12 +875,11 @@ func cmdConfig(argv []string, d Deps) int {
 	return 0
 }
 
-func cmdInternalRun(argv []string, d Deps) int {
+func cmdInternalRun(argv []string, d Deps) (exit int) {
 	name := argv[0]
 	rest := argv[1:]
-	shellName := os.Getenv("TKX_SHELL")
-	id := os.Getenv("TKX_INSTANCE_ID")
-	cwd := os.Getenv("TKX_CWD")
+	shellName := ""
+	id := ""
 	var taskArgs []string
 	for i := 0; i < len(rest); {
 		switch {
@@ -624,41 +897,74 @@ func cmdInternalRun(argv []string, d Deps) int {
 			i++
 		}
 	}
-	if cwd != "" {
-		os.Chdir(cwd)
+	if id != "" {
+		// Every exit path must retire the instance: a vanished
+		// taskfile may fail the load below, and the registry entry
+		// must not stay "running" forever.
+		defer func() {
+			dataDir, _ := config.DataDir()
+			_ = bg.MarkEnded(dataDir, id, "exited", exit)
+		}()
 	}
-	c, shells, err := loadTaskfile(d)
+	files, err := filesFromEnv()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "hire: %v\n", err)
+		fmt.Fprintf(d.Stderr, "hire: %v\n", err)
+		return 1
+	}
+	if len(files) == 0 {
+		fmt.Fprintln(d.Stderr, "hire: HIRE_FILES not set; probing taskfiles")
+		files, err = resolveTaskfiles(d)
+		if err != nil {
+			fmt.Fprintf(d.Stderr, "hire: %v\n", err)
+			return 1
+		}
+	}
+	c, shells, err := loadChain(files)
+	if err != nil {
+		fmt.Fprintf(d.Stderr, "hire: %v\n", err)
 		return 1
 	}
 	defer c.Close()
 	task, ok := c.Tasks[name]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "hire: task %q not found\n", name)
+		fmt.Fprintf(d.Stderr, "hire: task %q not found\n", name)
 		return 1
 	}
 	parsed, err := argparse.Parse(taskArgs, task.Args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "hire: %v\n", err)
+		fmt.Fprintf(d.Stderr, "hire: %v\n", err)
+		return 1
+	}
+	if err := setHireArgs(task, parsed); err != nil {
+		fmt.Fprintf(d.Stderr, "hire: %v\n", err)
 		return 1
 	}
 	argsTable := argparse.ToLuaTable(c.FileOf(task).L, parsed)
-	exitCode := 0
-	err = runtime.Run(c, name, argsTable, runtime.Options{
+	if err := runtime.Run(c, name, argsTable, runtime.Options{
 		ShellName: shellName, Registry: shells,
-		Stdout: os.Stdout, Stderr: os.Stderr, Stdin: nil,
+		Stdout: d.Stdout, Stderr: d.Stderr, Stdin: nil,
 		Background: true,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "hire: %v\n", err)
-		exitCode = 1
+	}); err != nil {
+		fmt.Fprintf(d.Stderr, "hire: %v\n", err)
+		return 1
 	}
-	if id != "" {
-		dataDir, _ := config.DataDir()
-		_ = bg.MarkEnded(dataDir, id, "exited", exitCode)
+	return 0
+}
+
+// filesFromEnv decodes the HIRE_FILES handoff from bstart: a JSON
+// array of paths. Empty means "not handed off" (manual _run); a
+// malformed value is a hard error rather than a silent re-probe, which
+// could execute an unrelated file.
+func filesFromEnv() ([]string, error) {
+	v := os.Getenv("HIRE_FILES")
+	if v == "" {
+		return nil, nil
 	}
-	return exitCode
+	var files []string
+	if err := json.Unmarshal([]byte(v), &files); err != nil {
+		return nil, fmt.Errorf("HIRE_FILES: invalid file list: %v", err)
+	}
+	return files, nil
 }
 
 func cmdHelpTask(name string, d Deps) int {
@@ -671,6 +977,9 @@ func cmdHelpTask(name string, d Deps) int {
 	task, ok := c.Tasks[name]
 	if !ok {
 		fmt.Fprintf(d.Stderr, "hire: task %q not found\n", name)
+		if hint := suggestTask(c, name); hint != "" {
+			fmt.Fprintln(d.Stderr, hint)
+		}
 		return 1
 	}
 	fmt.Fprintf(d.Stdout, "hire %s\n", name)
@@ -700,15 +1009,18 @@ func cmdHelpTask(name string, d Deps) int {
 	return 0
 }
 
-func confirm(prompt string, in io.Reader, out io.Writer) bool {
+// confirm asks a yes/no question. eof=true means no answer was
+// possible (closed or non-interactive stdin): callers must treat
+// that as a hard abort, not a soft decline.
+func confirm(prompt string, in io.Reader, out io.Writer) (ok, eof bool) {
 	fmt.Fprintf(out, "%s [y/N] ", prompt)
 	reader := bufio.NewReader(in)
 	line, err := reader.ReadString('\n')
 	line = strings.ToLower(strings.TrimSpace(line))
 	if err != nil && line == "" {
-		return false
+		return false, true
 	}
-	return line == "y" || line == "yes"
+	return line == "y" || line == "yes", false
 }
 
 func findInstance(all []bg.Instance, ref string) (bg.Instance, error) {

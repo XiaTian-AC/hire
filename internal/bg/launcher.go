@@ -1,6 +1,7 @@
 package bg
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +16,11 @@ type StartOptions struct {
 	ShellName string
 	CWD       string
 	DataDir   string
+	// Files is the effective taskfile list the parent resolved. It is
+	// handed to the _run child via HIRE_FILES so the background run
+	// executes exactly the same files (a --taskfile bstart used to
+	// silently fall back to the global lookup).
+	Files []string
 }
 
 func Start(opts StartOptions) (*Instance, error) {
@@ -41,6 +47,14 @@ func Start(opts StartOptions) (*Instance, error) {
 	cmd.Dir = opts.CWD
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
+	if len(opts.Files) > 0 {
+		filesJSON, err := json.Marshal(opts.Files)
+		if err != nil {
+			_ = MarkEnded(opts.DataDir, id, "exited", -1)
+			return nil, fmt.Errorf("encode HIRE_FILES: %w", err)
+		}
+		cmd.Env = append(os.Environ(), "HIRE_FILES="+string(filesJSON))
+	}
 	detach(cmd)
 	if err := cmd.Start(); err != nil {
 		_ = MarkEnded(opts.DataDir, id, "exited", -1)
