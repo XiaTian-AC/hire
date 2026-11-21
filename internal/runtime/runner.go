@@ -34,13 +34,26 @@ func Run(c *adapter.Chain, name string, args *lua.LTable, opts Options) error {
 	if shellName == "" {
 		shellName = c.DefaultShell
 	}
+	stdout, stderr := io.Writer(opts.Stdout), io.Writer(opts.Stderr)
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
 	ctx := &Ctx{
 		File: file, ShellName: shellName, Registry: opts.Registry,
-		Stdout: opts.Stdout, Stderr: opts.Stderr, Stdin: opts.Stdin,
+		Stdout: &syncWriter{w: stdout}, Stderr: &syncWriter{w: stderr},
+		Stdin: opts.Stdin,
 		Background: opts.Background,
 	}
+	// Task end (normal return, Lua error, or panic) always closes every
+	// persistent instance: stdin EOF, brief wait, then kill.
+	defer ctx.closeInstances()
 	if err := callTask(file.L, ctx, task, args); err != nil {
+		ctx.finishExport(name, true)
 		return fmt.Errorf("task %q: %v", name, err)
 	}
+	ctx.finishExport(name, false)
 	return nil
 }
