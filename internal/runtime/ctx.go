@@ -349,7 +349,9 @@ func (inst *instance) send(c *Ctx, cmd string) (int, error) {
 	prefix := sentinelPrefix + nonce + ":"
 	var echo string
 	if inst.name == "pwsh" {
-		echo = `Write-Output "__HIRE_RC:` + nonce + `:$LASTEXITCODE"`
+		// Spec amendment (design spec §9): $? catches cmdlet failures,
+		// which leave $LASTEXITCODE untouched; v1 one-shot parity.
+		echo = `Write-Output "__HIRE_RC:` + nonce + `:$(if ($?) { $LASTEXITCODE } else { 1 })"`
 	} else {
 		echo = `printf '__HIRE_RC:%s:%s\n' ` + nonce + ` "$?"`
 	}

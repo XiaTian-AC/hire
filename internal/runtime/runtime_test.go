@@ -323,6 +323,32 @@ end
 	}
 }
 
+// Spec amendment (design spec §9, old-v2 §5 row): the pwsh sentinel
+// counts cmdlet failures too — a failing cmdlet must raise exit 1,
+// matching v1 one-shot semantics, and the instance must survive.
+func TestPwshCmdletFailure(t *testing.T) {
+	mustShell(t, "pwsh")
+	c := writeChain(t, `
+shell = "pwsh"
+pwshcmdfail = function() x.sh("Get-DoesNotExist") end
+pwshcmdsurvive = function()
+  pcall(x.sh, "Get-DoesNotExist")
+  x.sh("Write-Output survived")
+end
+`)
+	_, _, err := runTaskIO(t, c, "pwshcmdfail")
+	if err == nil || !strings.Contains(err.Error(), "exit 1") || !strings.Contains(err.Error(), "Get-DoesNotExist") {
+		t.Errorf("err = %v, want exit 1 error naming the cmdlet", err)
+	}
+	out, _, err := runTaskIO(t, c, "pwshcmdsurvive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "survived") {
+		t.Errorf("output = %q, want instance usable after a cmdlet failure", out)
+	}
+}
+
 func TestExportCollect(t *testing.T) {
 	c := writeChain(t, `
 exp = function()
