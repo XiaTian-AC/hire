@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -229,20 +230,12 @@ func ParseDuration(s string) (time.Duration, error) {
 	if s == "" || s == "0" {
 		return 0, nil
 	}
-	if len(s) > 1 && s[0] >= '0' && s[0] <= '9' {
-		suffix := s[len(s)-1]
-		if suffix >= '0' && suffix <= '9' {
-			s = s + "h"
-		}
+	unit, num := byte('h'), s
+	if last := s[len(s)-1]; last < '0' || last > '9' {
+		unit, num = last, s[:len(s)-1]
 	}
-	var n int
-	var unit byte
-	if _, err := fmt.Sscanf(s, "%d%c", &n, &unit); err != nil {
-		if err.Error() == "unexpected EOF" || err == fmt.Errorf("missing verb") {
-			if _, err2 := fmt.Sscanf(s, "%d", &n); err2 == nil {
-				return time.Duration(n) * time.Hour, nil
-			}
-		}
+	n, err := strconv.Atoi(num)
+	if err != nil || n < 0 {
 		return 0, fmt.Errorf("invalid duration %q (use 0, 30m, 1h, 2d, 1w)", s)
 	}
 	switch unit {

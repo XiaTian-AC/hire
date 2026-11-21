@@ -39,14 +39,33 @@ func setupEnv(t *testing.T, taskfileContent string) (Deps, *bytes.Buffer, *bytes
 	}, &out, &errOut
 }
 
-func TestRunNoArgs(t *testing.T) {
-	d, out, _ := setupEnv(t, "")
+func TestBareNoTaskfileExit0(t *testing.T) {
+	// spec §10: bare hire is a discovery command now, not an error
+	d, out, errOut := setupEnv(t, "")
 	code := Run(nil, d)
-	if code != 2 {
-		t.Errorf("no args: code = %d, want 2", code)
+	if code != 0 {
+		t.Fatalf("bare hire without taskfile: code = %d, want 0", code)
 	}
-	if !strings.Contains(out.String(), "Usage") {
-		t.Errorf("no args: should print usage")
+	if !strings.Contains(out.String(), "usage") {
+		t.Errorf("bare hire should still print the usage hint: out=%q err=%q", out.String(), errOut.String())
+	}
+}
+
+func TestBareListsTasks(t *testing.T) {
+	d, out, _ := setupEnv(t, `
+build = function() end
+fmt = "cargo fmt"
+`)
+	code := Run(nil, d)
+	if code != 0 {
+		t.Fatalf("bare hire: code = %d, want 0", code)
+	}
+	s := out.String()
+	if !strings.Contains(s, "build") || !strings.Contains(s, "fmt") {
+		t.Errorf("bare hire should list tasks: %q", s)
+	}
+	if !strings.Contains(s, "usage") {
+		t.Errorf("bare hire should print one usage line: %q", s)
 	}
 }
 
@@ -170,16 +189,25 @@ func TestExtractShellNotAfterDoubleDash(t *testing.T) {
 }
 
 func TestConfirmYes(t *testing.T) {
-	ok := confirm("test?", strings.NewReader("y\n"), &bytes.Buffer{})
-	if !ok {
-		t.Error("confirm('y') should return true")
+	ok, eof := confirm("test?", strings.NewReader("y\n"), &bytes.Buffer{})
+	if !ok || eof {
+		t.Error("confirm('y') should be (true, false)")
 	}
 }
 
 func TestConfirmNo(t *testing.T) {
-	ok := confirm("test?", strings.NewReader("n\n"), &bytes.Buffer{})
-	if ok {
-		t.Error("confirm('n') should return false")
+	ok, eof := confirm("test?", strings.NewReader("n\n"), &bytes.Buffer{})
+	if ok || eof {
+		t.Error("confirm('n') should be (false, false)")
+	}
+}
+
+func TestConfirmEOF(t *testing.T) {
+	// non-interactive stdin: no answer possible, callers must abort
+	// hard (exit 1), not treat it as a soft decline
+	ok, eof := confirm("test?", strings.NewReader(""), &bytes.Buffer{})
+	if ok || !eof {
+		t.Error("confirm(EOF) should be (false, true)")
 	}
 }
 
@@ -327,8 +355,10 @@ plain = function() end
 	if !strings.Contains(s, "--tag (required)") {
 		t.Errorf("ls output should mark required arg: %q", s)
 	}
-	if strings.Contains(strings.Split(s, "\n")[strings.Index(s, "plain")], "[args") {
-		t.Errorf("task without args should not have args hint")
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, "plain") && strings.Contains(line, "[args") {
+			t.Errorf("task without args should not have args hint: %q", line)
+		}
 	}
 }
 
@@ -696,5 +726,185 @@ func TestHireArgsInjectedInternalRun(t *testing.T) {
 	}
 	if got := os.Getenv("HIRE_ARGS"); got != `{"_":[],"msg":"hi"}` {
 		t.Errorf("HIRE_ARGS = %q", got)
+	}
+}
+
+// --- Task 7: UX polish + audit cleanup ---
+
+func TestDidYouMeanNear(t *testing.T) {
+	d, _, errOut := setupEnv(t, `build = function() end`)
+	if code := Run([]string{"buld"}, d); code != 1 {
+		t.Fatalf("buld: code = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), `did you mean "build"`) {
+		t.Errorf("near typo should suggest: %q", errOut.String())
+	}
+	// edit distance exactly 2 is still close enough
+	errOut.Reset()
+	if code := Run([]string{"buildxx"}, d); code != 1 {
+		t.Fatalf("buildxx: code = %d", code)
+	}
+	if !strings.Contains(errOut.String(), `did you mean "build"`) {
+		t.Errorf("distance-2 typo should suggest: %q", errOut.String())
+	}
+}
+
+func TestDidYouMeanFar(t *testing.T) {
+	d, _, errOut := setupEnv(t, `build = function() end`)
+	for _, name := range []string{"zzzzzz", "buildxxx"} { // distance >= 3
+		errOut.Reset()
+		if code := Run([]string{name}, d); code != 1 {
+			t.Fatalf("%s: code = %d", name, code)
+		}
+		if strings.Contains(errOut.String(), "did you mean") {
+			t.Errorf("far typo %q should not suggest: %q", name, errOut.String())
+		}
+	}
+}
+
+func TestTaskHelpFlagRoutesBeforeArgparse(t *testing.T) {
+	d, out, _ := setupEnv(t, `deploy = task {
+  desc = "deploy the app",
+  args = { env = req "target env" },
+  run = function(args) x.echo("deploying") end,
+}`)
+	code := Run([]string{"deploy", "--help"}, d)
+	if code != 0 {
+		t.Fatalf("deploy --help: code = %d, want 0", code)
+	}
+	s := out.String()
+	if !strings.Contains(s, "deploy the app") || !strings.Contains(s, "--env") {
+		t.Errorf("deploy --help output = %q", s)
+	}
+	if strings.Contains(s, "deploying") {
+		t.Errorf("--help must not run the task: %q", s)
+	}
+}
+
+func TestBstartNonInteractiveAndYes(t *testing.T) {
+	d, out, errOut := setupEnv(t, `dup = function() end`)
+	dataDir, _ := config.DataDir()
+	bg.Register(dataDir, bg.Instance{ID: "dup#1", Name: "dup", N: 1, PID: 99999, Status: "running", Started: time.Now().UTC()})
+	// the start attempt after --yes fails at spawn (bogus self path),
+	// which still proves the confirmation was bypassed
+	d.SelfPath = filepath.Join(t.TempDir(), "no-such-hire-binary")
+	d.Stdin = strings.NewReader("") // non-interactive: immediate EOF
+
+	code := Run([]string{"bstart", "dup"}, d)
+	if code != 1 {
+		t.Fatalf("bstart non-interactive abort: code = %d, want 1", code)
+	}
+	if !strings.Contains(out.String(), "aborted") {
+		t.Errorf("out = %q", out.String())
+	}
+	all, _ := bg.Snapshot(dataDir)
+	if len(all) != 1 {
+		t.Errorf("abort must not register a second instance: %v", all)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	code = Run([]string{"bstart", "dup", "--yes"}, d)
+	if s := out.String(); strings.Contains(s, "[y/N]") || strings.Contains(s, "aborted") {
+		t.Errorf("--yes should skip the confirmation: %q", s)
+	}
+	if code != 1 || !strings.Contains(errOut.String(), "spawn") {
+		t.Errorf("--yes bstart should reach the spawn: code=%d err=%q", code, errOut.String())
+	}
+	all, _ = bg.Snapshot(dataDir)
+	if len(all) != 2 {
+		t.Errorf("the --yes attempt should register a second instance: %v", all)
+	}
+}
+
+func TestStopNonInteractiveAndYes(t *testing.T) {
+	d, out, _ := setupEnv(t, "")
+	dataDir, _ := config.DataDir()
+	now := time.Now().UTC()
+	bg.Register(dataDir, bg.Instance{ID: "svc#1", Name: "svc", N: 1, PID: 99998, Status: "running", Started: now})
+	bg.Register(dataDir, bg.Instance{ID: "svc#2", Name: "svc", N: 2, PID: 99999, Status: "running", Started: now})
+	d.Stdin = strings.NewReader("")
+
+	code := Run([]string{"stop", "svc"}, d)
+	if code != 1 {
+		t.Fatalf("stop non-interactive abort: code = %d, want 1", code)
+	}
+	if !strings.Contains(out.String(), "aborted") {
+		t.Errorf("out = %q", out.String())
+	}
+	all, _ := bg.Snapshot(dataDir)
+	for _, inst := range all {
+		if inst.Status != "running" {
+			t.Errorf("abort must not stop anything: %+v", inst)
+		}
+	}
+
+	out.Reset()
+	code = Run([]string{"stop", "svc", "--yes"}, d)
+	if code != 0 {
+		t.Fatalf("stop --yes: code = %d", code)
+	}
+	if s := out.String(); strings.Contains(s, "[y/N]") {
+		t.Errorf("--yes should skip the confirmation: %q", s)
+	}
+	all, _ = bg.Snapshot(dataDir)
+	for _, inst := range all {
+		if inst.Status != "stopped" {
+			t.Errorf("--yes should stop both instances: %+v", inst)
+		}
+	}
+}
+
+func TestCleanOlderThanSpaceForm(t *testing.T) {
+	// audit #2 regression: `clean --older-than 1h` used to be ignored
+	// and silently cleaned EVERYTHING
+	d, _, _ := setupEnv(t, "")
+	dataDir, _ := config.DataDir()
+	now := time.Now().UTC()
+	old := now.Add(-48 * time.Hour)
+	recent := now.Add(-10 * time.Minute)
+	bg.Register(dataDir, bg.Instance{ID: "build#1", Name: "build", N: 1, PID: 1, Status: "exited", Started: old, EndedAt: &old})
+	bg.Register(dataDir, bg.Instance{ID: "build#2", Name: "build", N: 2, PID: 2, Status: "exited", Started: now, EndedAt: &recent})
+	code := Run([]string{"clean", "--older-than", "1h"}, d)
+	if code != 0 {
+		t.Fatalf("clean --older-than 1h: code = %d", code)
+	}
+	all, _ := bg.Snapshot(dataDir)
+	if len(all) != 1 || all[0].ID != "build#2" {
+		t.Errorf("space form must delete only instances past the threshold, got %v", all)
+	}
+}
+
+func TestCleanOlderThanMissingValue(t *testing.T) {
+	// --older-than without a value must error, not fall back to
+	// clean-all
+	d, _, errOut := setupEnv(t, "")
+	dataDir, _ := config.DataDir()
+	now := time.Now().UTC()
+	bg.Register(dataDir, bg.Instance{ID: "x#1", Name: "x", N: 1, PID: 1, Status: "exited", Started: now, EndedAt: &now})
+	code := Run([]string{"clean", "--older-than"}, d)
+	if code != 2 {
+		t.Fatalf("clean --older-than without value: code = %d, want 2", code)
+	}
+	all, _ := bg.Snapshot(dataDir)
+	if len(all) != 1 {
+		t.Errorf("nothing should be removed: %v", all)
+	}
+	if !strings.Contains(errOut.String(), "--older-than") {
+		t.Errorf("error should name the flag: %q", errOut.String())
+	}
+}
+
+func TestBuiltinCollisionHint(t *testing.T) {
+	// A task named like a builtin is unreachable by its bare name
+	// (the builtin wins); the usage error must point at the escape
+	// hatch directly instead of hiding it in `hire help`.
+	d, _, errOut := setupEnv(t, `watch = function() x.echo("my watch task") end`)
+	code := Run([]string{"watch"}, d)
+	if code != 2 {
+		t.Fatalf("bare watch with a shadowed task: code = %d, want 2", code)
+	}
+	if !strings.Contains(errOut.String(), "hire run watch") {
+		t.Errorf("collision hint missing: %q", errOut.String())
 	}
 }

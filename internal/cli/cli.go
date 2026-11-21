@@ -46,8 +46,7 @@ func Run(argv []string, d Deps) int {
 	}
 
 	if len(argv) == 0 {
-		usage(d.Stdout)
-		return 2
+		return cmdBare(d)
 	}
 
 	if d.TaskfileOverride == "" {
@@ -72,12 +71,14 @@ func Run(argv []string, d Deps) int {
 	case "start", "run":
 		if len(rest) == 0 {
 			fmt.Fprintf(d.Stderr, "hire: usage: hire %s <task> [args]\n", cmd)
+			hintShadowed(cmd, d)
 			return 2
 		}
 		return cmdRunTask(rest, d)
 	case "bstart":
 		if len(rest) == 0 {
 			fmt.Fprintln(d.Stderr, "hire: usage: hire bstart <task> [args]")
+			hintShadowed("bstart", d)
 			return 2
 		}
 		return cmdBstart(rest, d)
@@ -88,15 +89,12 @@ func Run(argv []string, d Deps) int {
 	case "watch":
 		if len(rest) == 0 {
 			fmt.Fprintln(d.Stderr, "hire: usage: hire watch <name>[#N]")
+			hintShadowed("watch", d)
 			return 2
 		}
 		return cmdWatch(rest[0], d)
 	case "stop":
-		if len(rest) == 0 {
-			fmt.Fprintln(d.Stderr, "hire: usage: hire stop <name>[#N]")
-			return 2
-		}
-		return cmdStop(rest[0], d)
+		return cmdStop(rest, d)
 	case "config":
 		return cmdConfig(rest, d)
 	case "_run":
@@ -108,6 +106,39 @@ func Run(argv []string, d Deps) int {
 	return cmdRunTask(argv, d)
 }
 
+// cmdBare handles a bare `hire`: list tasks, then one usage hint line
+// (spec §10 — a discovery command, exit 0; a missing taskfile only
+// downgrades the listing, not the exit code).
+func cmdBare(d Deps) int {
+	c, _, err := loadTaskfile(d)
+	if err == nil {
+		defer c.Close()
+		if len(c.Order) == 0 {
+			fmt.Fprintln(d.Stdout, "no tasks defined")
+		} else {
+			listTasks(c, d.Stdout)
+		}
+	} else {
+		fmt.Fprintln(d.Stderr, "hire:", err)
+	}
+	fmt.Fprintln(d.Stdout, "usage: hire <task> [args] runs a task; hire help lists all commands")
+	return 0
+}
+
+// hintShadowed points at the escape hatch when a task with the same
+// name as a builtin command exists: the builtin wins, so the task is
+// reachable only through `hire run <name>`.
+func hintShadowed(cmd string, d Deps) {
+	c, _, err := loadTaskfile(d)
+	if err != nil {
+		return
+	}
+	defer c.Close()
+	if _, ok := c.Tasks[cmd]; ok {
+		fmt.Fprintf(d.Stderr, "hire: task %q is shadowed by the builtin %q command; use 'hire run %s' to run it\n", cmd, cmd, cmd)
+	}
+}
+
 func usage(out io.Writer) {
 	cfgDir, _ := config.ConfigDir()
 	fmt.Fprintf(out, `hire - task runner (any-language taskfiles + background execution)
@@ -117,7 +148,8 @@ Usage:
   hire bstart <task> [args] run a task in the background (detached)
   hire ls                   list tasks
   hire ls-running           list background instances (filtered by display.ls_running.time)
-  hire clean [--all|--older-than <dur>]  remove ended instances (and their logs)
+  hire clean [--all|--older-than <dur>]
+                            remove ended instances (and their logs)
   hire watch <name>[#N]     tail a background instance's log live
   hire stop <name>[#N]      stop background instance(s)
   hire config [section]     show effective config (all | display | shells)
@@ -315,6 +347,11 @@ func cmdLs(d Deps) int {
 		fmt.Fprintln(d.Stdout, "no tasks defined")
 		return 0
 	}
+	listTasks(c, d.Stdout)
+	return 0
+}
+
+func listTasks(c *adapter.Chain, out io.Writer) {
 	maxLen := 0
 	for _, name := range c.Order {
 		if len(name) > maxLen {
@@ -327,9 +364,8 @@ func cmdLs(d Deps) int {
 		if argsHint := argsHint(task.Args); argsHint != "" {
 			desc = desc + "  " + argsHint
 		}
-		fmt.Fprintf(d.Stdout, "%-*s  %s\n", maxLen, name, desc)
+		fmt.Fprintf(out, "%-*s  %s\n", maxLen, name, desc)
 	}
-	return 0
 }
 
 func argsHint(specs map[string]argparse.Spec) string {
@@ -375,6 +411,59 @@ func setHireArgs(task *adapter.Task, parsed *argparse.Parsed) error {
 	return os.Setenv("HIRE_ARGS", string(b))
 }
 
+// levenshtein is the classic edit distance (byte-wise DP), used only
+// for did-you-mean hints.
+func levenshtein(a, b string) int {
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = min(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
+}
+
+// suggestTask returns a one-line did-you-mean hint when the typed name
+// is within edit distance 2 of a task; ties resolve to the
+// alphabetically first candidate (c.Order is sorted).
+func suggestTask(c *adapter.Chain, name string) string {
+	best, bestDist := "", 3 // > 2: nothing close, no hint
+	for _, n := range c.Order {
+		if d := levenshtein(name, n); d < bestDist {
+			best, bestDist = n, d
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return fmt.Sprintf("hire: did you mean %q?", best)
+}
+
+// hasHelpFlag reports whether --help appears before the -- separator:
+// intercepted before argparse, so it works even for tasks that declare
+// required args (or none at all).
+func hasHelpFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
 func cmdRunTask(argv []string, d Deps) int {
 	name := argv[0]
 	shellName, taskArgs := extractShell(argv[1:])
@@ -387,7 +476,13 @@ func cmdRunTask(argv []string, d Deps) int {
 	task, ok := c.Tasks[name]
 	if !ok {
 		fmt.Fprintf(d.Stderr, "hire: task %q not found; run 'hire ls'\n", name)
+		if hint := suggestTask(c, name); hint != "" {
+			fmt.Fprintln(d.Stderr, hint)
+		}
 		return 1
+	}
+	if hasHelpFlag(taskArgs) {
+		return cmdHelpTask(name, d)
 	}
 	parsed, err := argparse.Parse(taskArgs, task.Args)
 	if err != nil {
@@ -412,13 +507,14 @@ func cmdRunTask(argv []string, d Deps) int {
 
 func cmdBstart(argv []string, d Deps) int {
 	name := argv[0]
-	shellName, taskArgs := extractShell(argv[1:])
+	autoYes, taskArgs := extractYes(argv[1:])
+	shellName, taskArgs := extractShell(taskArgs)
 	files, err := resolveTaskfiles(d)
 	if err != nil {
 		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
-	c, shells, err := loadChain(files)
+	c, _, err := loadChain(files)
 	if err != nil {
 		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
@@ -427,6 +523,9 @@ func cmdBstart(argv []string, d Deps) int {
 	task, ok := c.Tasks[name]
 	if !ok {
 		fmt.Fprintf(d.Stderr, "hire: task %q not found; run 'hire ls'\n", name)
+		if hint := suggestTask(c, name); hint != "" {
+			fmt.Fprintln(d.Stderr, hint)
+		}
 		return 1
 	}
 	_, err = argparse.Parse(taskArgs, task.Args)
@@ -450,12 +549,17 @@ func cmdBstart(argv []string, d Deps) int {
 			fmt.Fprintf(d.Stdout, "  %s (pid %d, started %s)\n", inst.ID, inst.PID, inst.Started.Format("15:04:05"))
 		}
 		fmt.Fprintln(d.Stdout, "WARNING: same-name instances may conflict (file/port contention, unlocked git operations).")
-		if !confirm("Start another?", d.Stdin, d.Stdout) {
-			fmt.Fprintln(d.Stdout, "aborted")
-			return 0
+		if !autoYes {
+			ok, eof := confirm("Start another?", d.Stdin, d.Stdout)
+			if !ok {
+				fmt.Fprintln(d.Stdout, "aborted")
+				if eof {
+					return 1 // non-interactive stdin: not a soft decline
+				}
+				return 0
+			}
 		}
 	}
-	_ = shells
 	cwd, _ := os.Getwd()
 	inst, err := bg.Start(bg.StartOptions{
 		SelfPath:  d.SelfPath,
@@ -473,6 +577,25 @@ func cmdBstart(argv []string, d Deps) int {
 	fmt.Fprintf(d.Stdout, "started %s (pid %d)\nlog: %s\nwatch: hire watch %s\nstop:  hire stop %s\n",
 		inst.ID, inst.PID, inst.Log, inst.ID, inst.ID)
 	return 0
+}
+
+// extractYes removes the --yes flag (confirmation bypass) from argv,
+// leaving everything after -- untouched.
+func extractYes(argv []string) (bool, []string) {
+	out := make([]string, 0, len(argv))
+	yes := false
+	for i := 0; i < len(argv); i++ {
+		if argv[i] == "--" {
+			out = append(out, argv[i:]...)
+			return yes, out
+		}
+		if argv[i] == "--yes" {
+			yes = true
+			continue
+		}
+		out = append(out, argv[i])
+	}
+	return yes, out
 }
 
 func cmdLsRunning(d Deps) int {
@@ -544,13 +667,21 @@ func cmdClean(argv []string, d Deps) int {
 		return 1
 	}
 	olderThan := ""
-	for _, a := range argv {
-		if a == "--all" {
+	for i := 0; i < len(argv); i++ {
+		switch {
+		case argv[i] == "--all":
 			olderThan = "0"
-			continue
-		}
-		if strings.HasPrefix(a, "--older-than=") {
-			olderThan = strings.TrimPrefix(a, "--older-than=")
+		case strings.HasPrefix(argv[i], "--older-than="):
+			olderThan = strings.TrimPrefix(argv[i], "--older-than=")
+		case argv[i] == "--older-than":
+			// space form: --older-than <dur>; a missing value must
+			// error, never fall through to clean-all
+			if i+1 >= len(argv) {
+				fmt.Fprintln(d.Stderr, "hire: --older-than requires a duration (e.g. 1h, 2d, 1w)")
+				return 2
+			}
+			olderThan = argv[i+1]
+			i++
 		}
 	}
 	all, err := bg.Snapshot(dataDir)
@@ -618,7 +749,14 @@ func cmdWatch(ref string, d Deps) int {
 	return 0
 }
 
-func cmdStop(ref string, d Deps) int {
+func cmdStop(argv []string, d Deps) int {
+	autoYes, rest := extractYes(argv)
+	if len(rest) == 0 {
+		fmt.Fprintln(d.Stderr, "hire: usage: hire stop <name>[#N] [--yes]")
+		hintShadowed("stop", d)
+		return 2
+	}
+	ref := rest[0]
 	dataDir, err := config.DataDir()
 	if err != nil {
 		fmt.Fprintln(d.Stderr, "hire:", err)
@@ -662,9 +800,15 @@ func cmdStop(ref string, d Deps) int {
 			for _, inst := range targets {
 				fmt.Fprintf(d.Stdout, "  %s (pid %d)\n", inst.ID, inst.PID)
 			}
-			if !confirm("Stop all?", d.Stdin, d.Stdout) {
-				fmt.Fprintln(d.Stdout, "aborted")
-				return 0
+			if !autoYes {
+				ok, eof := confirm("Stop all?", d.Stdin, d.Stdout)
+				if !ok {
+					fmt.Fprintln(d.Stdout, "aborted")
+					if eof {
+						return 1 // non-interactive stdin: not a soft decline
+					}
+					return 0
+				}
 			}
 		}
 	}
@@ -833,6 +977,9 @@ func cmdHelpTask(name string, d Deps) int {
 	task, ok := c.Tasks[name]
 	if !ok {
 		fmt.Fprintf(d.Stderr, "hire: task %q not found\n", name)
+		if hint := suggestTask(c, name); hint != "" {
+			fmt.Fprintln(d.Stderr, hint)
+		}
 		return 1
 	}
 	fmt.Fprintf(d.Stdout, "hire %s\n", name)
@@ -862,15 +1009,18 @@ func cmdHelpTask(name string, d Deps) int {
 	return 0
 }
 
-func confirm(prompt string, in io.Reader, out io.Writer) bool {
+// confirm asks a yes/no question. eof=true means no answer was
+// possible (closed or non-interactive stdin): callers must treat
+// that as a hard abort, not a soft decline.
+func confirm(prompt string, in io.Reader, out io.Writer) (ok, eof bool) {
 	fmt.Fprintf(out, "%s [y/N] ", prompt)
 	reader := bufio.NewReader(in)
 	line, err := reader.ReadString('\n')
 	line = strings.ToLower(strings.TrimSpace(line))
 	if err != nil && line == "" {
-		return false
+		return false, true
 	}
-	return line == "y" || line == "yes"
+	return line == "y" || line == "yes", false
 }
 
 func findInstance(all []bg.Instance, ref string) (bg.Instance, error) {
