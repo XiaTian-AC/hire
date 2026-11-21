@@ -2,9 +2,11 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -108,8 +110,7 @@ func Run(argv []string, d Deps) int {
 
 func usage(out io.Writer) {
 	cfgDir, _ := config.ConfigDir()
-	tfPath, _ := config.TaskfilePath()
-	fmt.Fprintf(out, `hire - task runner (global tasks + background execution)
+	fmt.Fprintf(out, `hire - task runner (any-language taskfiles + background execution)
 
 Usage:
   hire <task> [args]        run a task in the foreground
@@ -126,18 +127,69 @@ Usage:
 
 Flags:
   --shell <name>           select shell for this run
-  --taskfile <path>        use a specific Taskfile.lua (instead of the global one)
+  --taskfile <path>        use one specific taskfile (any supported extension)
 
 Files:
-  Taskfile: %s
-  config:   %s/config.lua
+  lookup: Taskfile.{toml,lua,py,js,cpp} in the working directory,
+          then in %s (same-name task: cwd wins)
+  config: %s/config.lua
 
-Tasks are defined in Taskfile.lua under the hire config directory.
-See config.lua for display options and shell registry.
-`, tfPath, cfgDir)
+Tasks are defined in a Taskfile.toml/lua/py/js/cpp in the working
+directory or the hire config directory. Python/JS/C++ taskfiles need a
+matching runtimes entry in config.lua.
+`, cfgDir, cfgDir)
 }
 
-func loadTaskfile(d Deps) (*adapter.Chain, map[string]string, error) {
+// resolveTaskfiles returns the effective taskfile list in LOAD order
+// (global first, cwd last, so a same-name task from cwd wins), or an
+// error listing every probed path when none exists. --taskfile
+// isolates to exactly one file, never merged.
+func resolveTaskfiles(d Deps) ([]string, error) {
+	if d.TaskfileOverride != "" {
+		return []string{d.TaskfileOverride}, nil
+	}
+	cfgDir, err := config.ConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	var load []string
+	seen := map[string]bool{}
+	for _, dir := range []string{cfgDir, cwd} {
+		for _, p := range config.Taskfiles(dir) {
+			abs, err := filepath.Abs(p)
+			if err != nil {
+				abs = p
+			}
+			if seen[abs] || !fileExists(p) {
+				continue
+			}
+			seen[abs] = true
+			load = append(load, p)
+		}
+	}
+	if len(load) == 0 {
+		var probed []string
+		for _, dir := range []string{cwd, cfgDir} { // probe order: cwd first
+			probed = append(probed, config.Taskfiles(dir)...)
+		}
+		return nil, fmt.Errorf("no Taskfile found (probed: %s)", strings.Join(probed, ", "))
+	}
+	return load, nil
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
+// loadChain loads the given files (the extension dispatches the
+// adapter) and merges them in list order. Callers pass globals first
+// so cwd tasks override on name clashes.
+func loadChain(files []string) (*adapter.Chain, map[string]string, error) {
 	cfgDir, err := config.ConfigDir()
 	if err != nil {
 		return nil, nil, err
@@ -146,19 +198,64 @@ func loadTaskfile(d Deps) (*adapter.Chain, map[string]string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	tfPath := d.TaskfileOverride
-	if tfPath == "" {
-		tfPath, err = config.TaskfilePath()
-		if err != nil {
-			return nil, nil, err
+	var rts map[string]adapter.RuntimeSpec
+	for _, p := range files {
+		if isExecExt(filepath.Ext(p)) {
+			rts, err = config.Runtimes(cfgDir)
+			if err != nil {
+				return nil, nil, err
+			}
+			break
 		}
 	}
-	var f *adapter.File
-	f, err = adapter.LoadLua(tfPath)
+	loaded := make([]*adapter.File, 0, len(files))
+	for _, p := range files {
+		f, err := loadOne(p, rts)
+		if err != nil {
+			for _, done := range loaded {
+				done.Close()
+			}
+			return nil, nil, err
+		}
+		loaded = append(loaded, f)
+	}
+	return adapter.NewChain(loaded...), shells, nil
+}
+
+func isExecExt(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".py", ".js", ".mjs", ".cpp", ".cc":
+		return true
+	}
+	return false
+}
+
+// loadOne loads a single taskfile; the extension picks the adapter.
+// .mjs/.cc dispatch too but are reachable only via --taskfile, since
+// the auto-discovery list is the fixed five.
+func loadOne(path string, rts map[string]adapter.RuntimeSpec) (*adapter.File, error) {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".lua":
+		return adapter.LoadLua(path)
+	case ".toml":
+		return adapter.LoadTOML(path)
+	case ".py", ".js", ".mjs", ".cpp", ".cc":
+		spec, name, err := adapter.ResolveRuntime(ext, rts)
+		if err != nil {
+			return nil, err
+		}
+		return adapter.LoadExec(path, spec, name)
+	}
+	return nil, fmt.Errorf("%s: unsupported taskfile extension %q (known: .toml .lua .py .js .cpp; --taskfile also accepts .mjs .cc)", path, ext)
+}
+
+func loadTaskfile(d Deps) (*adapter.Chain, map[string]string, error) {
+	files, err := resolveTaskfiles(d)
 	if err != nil {
 		return nil, nil, err
 	}
-	return adapter.NewChain(f), shells, nil
+	return loadChain(files)
 }
 
 func loadDisplay(d Deps) (config.Display, error) {
@@ -255,6 +352,29 @@ func argsHint(specs map[string]argparse.Spec) string {
 	return "[args: " + strings.Join(parts, ", ") + "]"
 }
 
+// setHireArgs publishes the parsed task args for exec-adapter task
+// closures, which re-exec the taskfile program with HIRE_ARGS read
+// from the process environment. Tasks without declared args get {}.
+func setHireArgs(task *adapter.Task, parsed *argparse.Parsed) error {
+	if len(task.Args) == 0 {
+		return os.Setenv("HIRE_ARGS", "{}")
+	}
+	m := make(map[string]any, len(parsed.Flags)+1)
+	for k, v := range parsed.Flags {
+		m[k] = v
+	}
+	if parsed.Positional != nil {
+		m["_"] = parsed.Positional
+	} else {
+		m["_"] = []string{} // marshal as [], not null
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return os.Setenv("HIRE_ARGS", string(b))
+}
+
 func cmdRunTask(argv []string, d Deps) int {
 	name := argv[0]
 	shellName, taskArgs := extractShell(argv[1:])
@@ -274,6 +394,10 @@ func cmdRunTask(argv []string, d Deps) int {
 		fmt.Fprintf(d.Stderr, "hire: task %q: %v\n", name, err)
 		return 1
 	}
+	if err := setHireArgs(task, parsed); err != nil {
+		fmt.Fprintln(d.Stderr, "hire:", err)
+		return 1
+	}
 	argsTable := argparse.ToLuaTable(c.FileOf(task).L, parsed)
 	err = runtime.Run(c, name, argsTable, runtime.Options{
 		ShellName: shellName, Registry: shells,
@@ -289,7 +413,12 @@ func cmdRunTask(argv []string, d Deps) int {
 func cmdBstart(argv []string, d Deps) int {
 	name := argv[0]
 	shellName, taskArgs := extractShell(argv[1:])
-	c, shells, err := loadTaskfile(d)
+	files, err := resolveTaskfiles(d)
+	if err != nil {
+		fmt.Fprintln(d.Stderr, "hire:", err)
+		return 1
+	}
+	c, shells, err := loadChain(files)
 	if err != nil {
 		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
@@ -335,6 +464,7 @@ func cmdBstart(argv []string, d Deps) int {
 		ShellName: shellName,
 		CWD:       cwd,
 		DataDir:   dataDir,
+		Files:     files,
 	})
 	if err != nil {
 		fmt.Fprintln(d.Stderr, "hire:", err)
@@ -601,12 +731,11 @@ func cmdConfig(argv []string, d Deps) int {
 	return 0
 }
 
-func cmdInternalRun(argv []string, d Deps) int {
+func cmdInternalRun(argv []string, d Deps) (exit int) {
 	name := argv[0]
 	rest := argv[1:]
-	shellName := os.Getenv("TKX_SHELL")
-	id := os.Getenv("TKX_INSTANCE_ID")
-	cwd := os.Getenv("TKX_CWD")
+	shellName := ""
+	id := ""
 	var taskArgs []string
 	for i := 0; i < len(rest); {
 		switch {
@@ -624,41 +753,74 @@ func cmdInternalRun(argv []string, d Deps) int {
 			i++
 		}
 	}
-	if cwd != "" {
-		os.Chdir(cwd)
+	if id != "" {
+		// Every exit path must retire the instance: a vanished
+		// taskfile may fail the load below, and the registry entry
+		// must not stay "running" forever.
+		defer func() {
+			dataDir, _ := config.DataDir()
+			_ = bg.MarkEnded(dataDir, id, "exited", exit)
+		}()
 	}
-	c, shells, err := loadTaskfile(d)
+	files, err := filesFromEnv()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "hire: %v\n", err)
+		fmt.Fprintf(d.Stderr, "hire: %v\n", err)
+		return 1
+	}
+	if len(files) == 0 {
+		fmt.Fprintln(d.Stderr, "hire: HIRE_FILES not set; probing taskfiles")
+		files, err = resolveTaskfiles(d)
+		if err != nil {
+			fmt.Fprintf(d.Stderr, "hire: %v\n", err)
+			return 1
+		}
+	}
+	c, shells, err := loadChain(files)
+	if err != nil {
+		fmt.Fprintf(d.Stderr, "hire: %v\n", err)
 		return 1
 	}
 	defer c.Close()
 	task, ok := c.Tasks[name]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "hire: task %q not found\n", name)
+		fmt.Fprintf(d.Stderr, "hire: task %q not found\n", name)
 		return 1
 	}
 	parsed, err := argparse.Parse(taskArgs, task.Args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "hire: %v\n", err)
+		fmt.Fprintf(d.Stderr, "hire: %v\n", err)
+		return 1
+	}
+	if err := setHireArgs(task, parsed); err != nil {
+		fmt.Fprintf(d.Stderr, "hire: %v\n", err)
 		return 1
 	}
 	argsTable := argparse.ToLuaTable(c.FileOf(task).L, parsed)
-	exitCode := 0
-	err = runtime.Run(c, name, argsTable, runtime.Options{
+	if err := runtime.Run(c, name, argsTable, runtime.Options{
 		ShellName: shellName, Registry: shells,
-		Stdout: os.Stdout, Stderr: os.Stderr, Stdin: nil,
+		Stdout: d.Stdout, Stderr: d.Stderr, Stdin: nil,
 		Background: true,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "hire: %v\n", err)
-		exitCode = 1
+	}); err != nil {
+		fmt.Fprintf(d.Stderr, "hire: %v\n", err)
+		return 1
 	}
-	if id != "" {
-		dataDir, _ := config.DataDir()
-		_ = bg.MarkEnded(dataDir, id, "exited", exitCode)
+	return 0
+}
+
+// filesFromEnv decodes the HIRE_FILES handoff from bstart: a JSON
+// array of paths. Empty means "not handed off" (manual _run); a
+// malformed value is a hard error rather than a silent re-probe, which
+// could execute an unrelated file.
+func filesFromEnv() ([]string, error) {
+	v := os.Getenv("HIRE_FILES")
+	if v == "" {
+		return nil, nil
 	}
-	return exitCode
+	var files []string
+	if err := json.Unmarshal([]byte(v), &files); err != nil {
+		return nil, fmt.Errorf("HIRE_FILES: invalid file list: %v", err)
+	}
+	return files, nil
 }
 
 func cmdHelpTask(name string, d Deps) int {

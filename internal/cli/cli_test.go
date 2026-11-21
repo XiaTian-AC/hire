@@ -2,9 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -393,5 +398,303 @@ func TestConfigCommand(t *testing.T) {
 	code = Run([]string{"config", "bogus"}, d)
 	if code != 2 {
 		t.Errorf("unknown section should exit 2, got %d", code)
+	}
+}
+
+// --- Task 6: lookup chain, merge, HIRE_FILES handoff, HIRE_ARGS ---
+
+// fakeInterp builds the adapter package's __hire__ contract test double
+// once per test run, so chain tests cover exec dispatch without
+// python/node/g++ on the machine.
+var fakeInterp = sync.OnceValue(func() string {
+	dir, err := os.MkdirTemp("", "hire-fakeinterp-")
+	if err != nil {
+		panic(err)
+	}
+	exe := filepath.Join(dir, "fakeinterp")
+	if goruntime.GOOS == "windows" {
+		exe += ".exe"
+	}
+	cmd := exec.Command("go", "build", "-o", exe, "main.go")
+	cmd.Dir = filepath.Join("..", "..", "internal", "adapter", "testdata", "fakeinterp")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		panic("go build fakeinterp: " + err.Error() + "\n" + string(out))
+	}
+	return exe
+})
+
+// captureStderr swaps the real os.Stderr for the duration of fn and
+// returns what was written to it: adapter.NewChain prints merge
+// warnings there directly, not through Deps.Stderr.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	fn()
+	w.Close()
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestLookupChainNoFilesListsProbedPaths(t *testing.T) {
+	d, _, errOut := setupEnv(t, "")
+	t.Chdir(t.TempDir())
+	code := Run([]string{"ls"}, d)
+	if code != 1 {
+		t.Fatalf("ls with no taskfiles: code = %d, want 1", code)
+	}
+	err := errOut.String()
+	cfgDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "hire")
+	cwd, _ := os.Getwd()
+	for _, want := range []string{
+		"Taskfile.toml", "Taskfile.lua", "Taskfile.py", "Taskfile.js", "Taskfile.cpp",
+		filepath.Join(cfgDir, "Taskfile.toml"), filepath.Join(cwd, "Taskfile.cpp"),
+	} {
+		if !strings.Contains(err, want) {
+			t.Errorf("error %q missing probed path %q", err, want)
+		}
+	}
+}
+
+func TestLookupChainGlobalOnly(t *testing.T) {
+	d, out, _ := setupEnv(t, `hello = function() x.echo("global-ran") end`)
+	t.Chdir(t.TempDir())
+	if code := Run([]string{"hello"}, d); code != 0 {
+		t.Fatalf("hello: code = %d", code)
+	}
+	if !strings.Contains(out.String(), "global-ran") {
+		t.Errorf("out = %q", out.String())
+	}
+}
+
+func TestLookupChainCwdOnly(t *testing.T) {
+	d, out, _ := setupEnv(t, "") // no global taskfile
+	cwd := t.TempDir()
+	os.WriteFile(filepath.Join(cwd, "Taskfile.lua"), []byte(`hello = function() x.echo("cwd-ran") end`), 0o644)
+	t.Chdir(cwd)
+	if code := Run([]string{"hello"}, d); code != 0 {
+		t.Fatalf("hello: code = %d", code)
+	}
+	if !strings.Contains(out.String(), "cwd-ran") {
+		t.Errorf("out = %q", out.String())
+	}
+}
+
+func TestLookupChainMergeCwdWins(t *testing.T) {
+	d, out, errOut := setupEnv(t, `
+shell = "sh"
+dup = function() x.echo("from-global") end
+globalonly = function() x.echo("globalonly-ran") end
+`)
+	cfgDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "hire")
+	cwd := t.TempDir()
+	os.WriteFile(filepath.Join(cwd, "Taskfile.lua"), []byte(`
+shell = "pwsh"
+dup = function() x.echo("from-cwd") end
+localonly = function() x.echo("localonly-ran") end
+`), 0o644)
+	os.WriteFile(filepath.Join(cwd, "Taskfile.toml"), []byte(`
+[tasks.tomlonly]
+desc = "from the cwd toml file"
+cmd = "echo toml"
+`), 0o644)
+	t.Chdir(cwd)
+
+	var code int
+	warn := captureStderr(t, func() {
+		code = Run([]string{"dup"}, d)
+	})
+	if code != 0 {
+		t.Fatalf("dup: code = %d", code)
+	}
+	if !strings.Contains(out.String(), "from-cwd") {
+		t.Errorf("dup output = %q, want the cwd version", out.String())
+	}
+	warn += errOut.String()
+	if !strings.Contains(warn, "redefined") ||
+		!strings.Contains(warn, filepath.Join(cwd, "Taskfile.lua")) ||
+		!strings.Contains(warn, filepath.Join(cfgDir, "Taskfile.lua")) {
+		t.Errorf("merge warning should name both source files: %q", warn)
+	}
+
+	out.Reset()
+	if code = Run([]string{"globalonly"}, d); code != 0 || !strings.Contains(out.String(), "globalonly-ran") {
+		t.Errorf("globalonly: code=%d out=%q", code, out.String())
+	}
+
+	out.Reset()
+	if code = Run([]string{"ls"}, d); code != 0 || !strings.Contains(out.String(), "tomlonly") {
+		t.Errorf("ls should list the cwd TOML task: code=%d out=%q", code, out.String())
+	}
+
+	c, _, err := loadTaskfile(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if c.DefaultShell != "pwsh" {
+		t.Errorf("DefaultShell = %q, want the cwd declaration to win", c.DefaultShell)
+	}
+}
+
+func TestTaskfileExplicitMjs(t *testing.T) {
+	d, out, errOut := setupEnv(t, "")
+	cfgDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "hire")
+	os.MkdirAll(cfgDir, 0o755)
+	cfg := "return { runtimes = { node = \"" + filepath.ToSlash(fakeInterp()) + "\" } }"
+	os.WriteFile(filepath.Join(cfgDir, "config.lua"), []byte(cfg), 0o644)
+	src := filepath.Join(t.TempDir(), "Taskfile.mjs")
+	os.WriteFile(src, []byte("// fake mjs taskfile\n"), 0o644)
+
+	if code := Run([]string{"--taskfile", src, "ls"}, d); code != 0 {
+		t.Fatalf("ls via --taskfile .mjs: code=%d err=%q", code, errOut.String())
+	}
+	if s := out.String(); !strings.Contains(s, "echo") || !strings.Contains(s, "boom") {
+		t.Errorf(".mjs ls output = %q", s)
+	}
+
+	out.Reset()
+	writeTo := filepath.Join(t.TempDir(), "args-out.txt")
+	t.Setenv("HIRE_WRITE", writeTo)
+	if code := Run([]string{"--taskfile", src, "echo", "--msg", "hi"}, d); code != 0 {
+		t.Fatalf("echo via --taskfile .mjs: code=%d err=%q", code, errOut.String())
+	}
+	got, err := os.ReadFile(writeTo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `"msg":"hi"`) {
+		t.Errorf("HIRE_ARGS round trip through the exec adapter = %q", got)
+	}
+
+	// .mjs is never auto-discovered: none of the five probed files
+	// exist, so plain ls must still report the lookup failure.
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"ls"}, d); code != 1 || !strings.Contains(errOut.String(), "Taskfile.lua") {
+		t.Errorf("bare ls should not discover .mjs: code=%d err=%q", code, errOut.String())
+	}
+}
+
+func TestInternalRunHireFiles(t *testing.T) {
+	d, out, errOut := setupEnv(t, "") // no global: _run must come entirely from HIRE_FILES
+	src := filepath.Join(t.TempDir(), "Taskfile.lua")
+	os.WriteFile(src, []byte(`hello = function() x.echo("env-file-ran") end`), 0o644)
+	dataDir, _ := config.DataDir()
+	bg.Register(dataDir, bg.Instance{ID: "envtest#1", Name: "hello", N: 1, Status: "running", Started: time.Now().UTC()})
+	j, err := json.Marshal([]string{src})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HIRE_FILES", string(j))
+	code := Run([]string{"_run", "hello", "--id", "envtest#1", "--"}, d)
+	if code != 0 {
+		t.Fatalf("_run: code=%d err=%q", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "env-file-ran") {
+		t.Errorf("_run out = %q", out.String())
+	}
+	all, _ := bg.Snapshot(dataDir)
+	for _, inst := range all {
+		if inst.ID == "envtest#1" {
+			if inst.Status != "exited" || inst.ExitCode != 0 {
+				t.Errorf("instance after _run = %+v, want exited(0)", inst)
+			}
+			return
+		}
+	}
+	t.Errorf("envtest#1 missing from registry: %v", all)
+}
+
+func TestInternalRunHireFilesMissingFile(t *testing.T) {
+	// The deterministic core of "bstart, then the taskfile vanishes":
+	// HIRE_FILES pointing at a missing file must surface the path, and
+	// the instance must be retired, not left "running" forever.
+	d, _, errOut := setupEnv(t, "")
+	dataDir, _ := config.DataDir()
+	bg.Register(dataDir, bg.Instance{ID: "ghost#1", Name: "hello", N: 1, Status: "running", Started: time.Now().UTC()})
+	ghost := filepath.Join(t.TempDir(), "gone.lua")
+	j, _ := json.Marshal([]string{ghost})
+	t.Setenv("HIRE_FILES", string(j))
+	code := Run([]string{"_run", "hello", "--id", "ghost#1", "--"}, d)
+	if code != 1 {
+		t.Fatalf("_run with missing file: code = %d, want 1", code)
+	}
+	if err := errOut.String(); !strings.Contains(err, "no Taskfile at") || !strings.Contains(err, ghost) {
+		t.Errorf("missing-file error = %q", err)
+	}
+	all, _ := bg.Snapshot(dataDir)
+	for _, inst := range all {
+		if inst.ID == "ghost#1" {
+			if inst.Status != "exited" || inst.ExitCode != 1 {
+				t.Errorf("ghost#1 = %+v, want exited(1)", inst)
+			}
+			return
+		}
+	}
+	t.Errorf("ghost#1 missing from registry: %v", all)
+}
+
+func TestInternalRunFallbackProbe(t *testing.T) {
+	d, out, errOut := setupEnv(t, `fb = function() x.echo("fallback-ran") end`)
+	t.Setenv("HIRE_FILES", "")
+	code := Run([]string{"_run", "fb", "--id", "fb#1", "--"}, d)
+	if code != 0 {
+		t.Fatalf("_run fallback: code=%d err=%q", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "fallback-ran") {
+		t.Errorf("out = %q", out.String())
+	}
+	if !strings.Contains(errOut.String(), "HIRE_FILES") {
+		t.Errorf("fallback should note the missing HIRE_FILES: %q", errOut.String())
+	}
+}
+
+func TestHireArgsInjectedForeground(t *testing.T) {
+	d, _, _ := setupEnv(t, `echo = task {
+  args = { msg = req "the message", force = bool "a flag" },
+  run = function(args) x.echo("ran") end,
+}`)
+	t.Setenv("HIRE_ARGS", "")
+	if code := Run([]string{"echo", "--msg", "hi", "--force", "pos1"}, d); code != 0 {
+		t.Fatalf("echo: code = %d", code)
+	}
+	want := `{"_":["pos1"],"force":true,"msg":"hi"}`
+	if got := os.Getenv("HIRE_ARGS"); got != want {
+		t.Errorf("HIRE_ARGS = %q, want %q", got, want)
+	}
+}
+
+func TestHireArgsNoDeclaredArgs(t *testing.T) {
+	d, _, _ := setupEnv(t, `plain = function() x.echo("ran") end`)
+	t.Setenv("HIRE_ARGS", "")
+	if code := Run([]string{"plain"}, d); code != 0 {
+		t.Fatalf("plain: code = %d", code)
+	}
+	if got := os.Getenv("HIRE_ARGS"); got != "{}" {
+		t.Errorf("HIRE_ARGS = %q, want {}", got)
+	}
+}
+
+func TestHireArgsInjectedInternalRun(t *testing.T) {
+	d, _, errOut := setupEnv(t, `echo = task {
+  args = { msg = req "the message" },
+  run = function(args) x.echo("ran") end,
+}`)
+	t.Setenv("HIRE_FILES", "")
+	t.Setenv("HIRE_ARGS", "")
+	if code := Run([]string{"_run", "echo", "--msg", "hi", "--"}, d); code != 0 {
+		t.Fatalf("_run echo: code=%d err=%q", code, errOut.String())
+	}
+	if got := os.Getenv("HIRE_ARGS"); got != `{"_":[],"msg":"hi"}` {
+		t.Errorf("HIRE_ARGS = %q", got)
 	}
 }

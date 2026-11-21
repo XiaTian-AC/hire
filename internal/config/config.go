@@ -44,12 +44,16 @@ func EnsureDataDir() (string, error) {
 	return dir, nil
 }
 
-func TaskfilePath() (string, error) {
-	dir, err := ConfigDir()
-	if err != nil {
-		return "", err
+// Taskfiles returns the fixed five-file lookup candidates for dir, in
+// probe order. .mjs/.cc are deliberately absent: they are reachable
+// only through --taskfile.
+func Taskfiles(dir string) []string {
+	names := [...]string{"Taskfile.toml", "Taskfile.lua", "Taskfile.py", "Taskfile.js", "Taskfile.cpp"}
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = filepath.Join(dir, n)
 	}
-	return filepath.Join(dir, "Taskfile.lua"), nil
+	return out
 }
 
 // Display holds display-related config options.
