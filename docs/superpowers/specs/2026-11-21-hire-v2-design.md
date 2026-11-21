@@ -134,7 +134,7 @@ bstart：解析出的文件列表经环境变量 HIRE_FILES（JSON 数组字符�
 |---|---|
 | §3 简化 Lua 语法（全局任务、快照差分、task{}/req/bool、字符串/数组/裸函数简写） | 原样吸收，成为 LuaAdapter 行为 |
 | §4 x 全局、function(args) 签名、x.env 新增 | 原样吸收 |
-| §5 持久 shell 实例 + 哨兵协议 + instance=0 export 模式 | 原样吸收；**仅 Lua/TOML 内建任务可用**（外部 taskfile 是完整程序，自管子进程；文档声明这是原生适配器的特权） |
+| §5 持久 shell 实例 + 哨兵协议 + instance=0 export 模式 | 原样吸收；**仅 Lua/TOML 内建任务可用**（外部 taskfile 是完整程序，自管子进程；文档声明这是原生适配器的特权）。**修订 2026-11-21**：pwsh 哨兵退出码改为 `$(if ($?) { $LASTEXITCODE } else { 1 })`，使失败的 cmdlet 同样抛错，对齐 v1 one-shot 语义——否则 Windows 默认 shell 下失败静默（T5 评审 Important 裁决） |
 | §6 TOML schema + 内联 Lua run | 原样吸收 |
 | §8 查找链、合并、bstart 环境交接 | 吸收并按本稿 §8 泛化 |
 | §10-12 测试/文档/范围外 | 合并入本稿 §12-14 |
