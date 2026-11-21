@@ -68,6 +68,8 @@ func Run(argv []string, d Deps) int {
 		return 0
 	case "ls":
 		return cmdLs(d)
+	case "init":
+		return cmdInit(rest, d)
 	case "start", "run":
 		if len(rest) == 0 {
 			fmt.Fprintf(d.Stderr, "hire: usage: hire %s <task> [args]\n", cmd)
@@ -147,6 +149,7 @@ Usage:
   hire <task> [args]        run a task in the foreground
   hire bstart <task> [args] run a task in the background (detached)
   hire ls                   list tasks
+  hire init [--lang <lang>] scaffold a runnable starter taskfile (lua default)
   hire ls-running           list background instances (filtered by display.ls_running.time)
   hire clean [--all|--older-than <dur>]
                             remove ended instances (and their logs)

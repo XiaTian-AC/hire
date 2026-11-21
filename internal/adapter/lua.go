@@ -247,15 +247,51 @@ func parseArgSpecs(at *lua.LTable, taskName, path string) (map[string]argparse.S
 			failure = fmt.Errorf("%s: task %q: arg %q must be a table (req/bool sugar or {type=, required=, desc=})", path, taskName, string(name))
 			return
 		}
+		// Spec fields are strict (Task 2+3 review M2): a wrong Lua type or
+		// an unknown field is a load-time error, matching the TOML
+		// adapter's Undecoded strictness — never a silently-defaulted value.
 		sp := argparse.Spec{Type: "string"}
-		if ty, ok := st.RawGetString("type").(lua.LString); ok {
-			sp.Type = string(ty)
+		var unknown string
+		st.ForEach(func(fk, fv lua.LValue) {
+			if failure != nil || unknown != "" {
+				return
+			}
+			field, ok := fk.(lua.LString)
+			if !ok {
+				failure = fmt.Errorf("%s: task %q: arg %q: field names must be strings", path, taskName, string(name))
+				return
+			}
+			switch string(field) {
+			case "type":
+				s, ok := fv.(lua.LString)
+				if !ok {
+					failure = fmt.Errorf("%s: task %q: arg %q: 'type' must be a string", path, taskName, string(name))
+					return
+				}
+				sp.Type = string(s)
+			case "required":
+				b, ok := fv.(lua.LBool)
+				if !ok {
+					failure = fmt.Errorf("%s: task %q: arg %q: 'required' must be a boolean", path, taskName, string(name))
+					return
+				}
+				sp.Required = bool(b)
+			case "desc":
+				s, ok := fv.(lua.LString)
+				if !ok {
+					failure = fmt.Errorf("%s: task %q: arg %q: 'desc' must be a string", path, taskName, string(name))
+					return
+				}
+				sp.Desc = string(s)
+			default:
+				unknown = string(field)
+			}
+		})
+		if failure == nil && unknown != "" {
+			failure = fmt.Errorf("%s: task %q: arg %q: unknown field %q (use type/required/desc)", path, taskName, string(name), unknown)
 		}
-		if rq, ok := st.RawGetString("required").(lua.LBool); ok {
-			sp.Required = bool(rq)
-		}
-		if d, ok := st.RawGetString("desc").(lua.LString); ok {
-			sp.Desc = string(d)
+		if failure != nil {
+			return
 		}
 		specs[string(name)] = sp
 	})

@@ -252,6 +252,23 @@ bar = "echo ok"
 	}
 }
 
+// Args spec fields with wrong Lua types or unknown names are load-time
+// errors, not silently-defaulted values (Task 2+3 review M2; matches the
+// TOML adapter's Undecoded strictness).
+func TestArgSpecStrict(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{`bad = task { args = { tag = { required = "true" } }, run = function() end }`, "'required'"},
+		{`bad = task { args = { tag = { type = 5 } }, run = function() end }`, "'type'"},
+		{`bad = task { args = { tag = { desc = true } }, run = function() end }`, "'desc'"},
+		{`bad = task { args = { tag = { typp = "string" } }, run = function() end }`, "unknown field"},
+	} {
+		err := loadErr(t, tc.src)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("LoadLua(%q) = %v, want error containing %q", tc.src, err, tc.want)
+		}
+	}
+}
+
 // Snapshot-diff: redefining a builtin (print) is a task candidate; untouched
 // builtins (string, pairs, ...) are not collected.
 func TestSnapshotDiff(t *testing.T) {
