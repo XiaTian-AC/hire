@@ -5,6 +5,11 @@
 
 version: 2
 
+# Release assets are named hire-<os>-<arch> regardless of the GitHub
+# repo's name at tag time (Task 1 parked minor M2: do not depend on the
+# taskx -> hire repo rename landing first).
+project_name: hire
+
 before:
   hooks:
     - go mod tidy

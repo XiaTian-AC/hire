@@ -1,31 +1,29 @@
-local tasks = {
-  echo = function(ctx)
-    ctx:echo("hello from echo task")
-  end,
+-- hire Taskfile.lua — runnable v2 sample (see docs/lua.md).
+-- hire <name> runs a task; hire ls lists them.
 
-  quick = function(ctx)
-    ctx:sh("echo line1")
-    ctx:sh("echo line2")
-    ctx:sh("echo line3")
-  end,
+echo = function()
+  x.echo("hello from echo task")
+end
 
-  longrun = function(ctx)
-    ctx:sh("echo will-sleep")
-    if ctx:os() == "windows" then
-      ctx:sh("Start-Sleep -Seconds 30")
-    else
-      ctx:sh("sleep 30")
-    end
-  end,
-
-  tagged = {
-    desc = "echo the tag argument",
-    args = {
-      tag = { type = "string", required = true, desc = "a version tag" },
-    },
-    run = function(ctx, args)
-      ctx:echo("tag=" .. args.tag)
-    end,
-  },
+quick = {
+  "echo line1",
+  "echo line2",
+  "echo line3",
 }
-return tasks
+
+longrun = function()
+  x.sh("echo will-sleep")
+  if x.os() == "windows" then
+    x.sh("Start-Sleep -Seconds 30")
+  else
+    x.sh("sleep 30")
+  end
+end
+
+tagged = task {
+  desc = "echo the tag argument",
+  args = { tag = req "a version tag" },
+  run = function(args)
+    x.echo("tag=" .. args.tag)
+  end,
+}

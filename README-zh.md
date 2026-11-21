@@ -7,262 +7,227 @@
 <h1 align="center">hire</h1>
 
 <p align="center">
-  <strong>现代任务运行器：Lua 任务文件 + 内置后台任务管理。</strong>
+  <strong>任意语言 taskfile 的任务运行器，自带后台任务管理。</strong>
   <br />
-  <em>真实代码而非 YAML · 全局任务 · 脱离终端的后台作业</em>
+  <em>真代码不做 YAML · Lua 原生内嵌，Python/Node/C++ 走契约 · 全局任务 · 后台分离执行</em>
 </p>
 
 <p align="center">
-  <a href="#快速开始"><img src="https://img.shields.io/badge/快速开始-4CAF50?style=for-the-badge" alt="Quick Start" /></a>
-  <a href="docs/lua.md"><img src="https://img.shields.io/badge/Taskfile_参考手册-00ADD8?style=for-the-badge" alt="Taskfile Reference" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License" /></a>
+  <a href="#五分钟首跑"><img src="https://img.shields.io/badge/快速上手-4CAF50?style=for-the-badge" alt="Quick Start" /></a>
+  <a href="docs/lua.md"><img src="https://img.shields.io/badge/Lua_参考-2C2D72?style=for-the-badge&logo=lua&logoColor=white" alt="Lua Reference" /></a>
+  <a href="docs/contract.md"><img src="https://img.shields.io/badge/契约-00ADD8?style=for-the-badge" alt="Contract" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/许可证-MIT-yellow?style=for-the-badge" alt="License" /></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/XiaTian-AC/hire/releases"><img src="https://img.shields.io/github/v/release/XiaTian-AC/hire?style=flat&color=blue" alt="Release" /></a>
   <a href="https://github.com/XiaTian-AC/hire/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/XiaTian-AC/hire/release.yml?branch=master&label=release%20ci&style=flat" alt="Release CI" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=flat" alt="License" /></a>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Go-00ADD8?style=flat&logo=go&logoColor=white" alt="Go" />
-  <img src="https://img.shields.io/badge/Lua_5.1-2C2D72?style=flat&logo=lua&logoColor=white" alt="Lua" />
-  <img src="https://img.shields.io/badge/platform-Windows_%7C_Linux_%7C_macOS-lightgrey?style=flat" alt="Platforms" />
+  <img src="https://img.shields.io/badge/平台-Windows_%7C_Linux_%7C_macOS-lightgrey?style=flat" alt="Platforms" />
 </p>
 
 ---
 
-## 为什么选 hire？
+## 为什么是 hire？
 
-- ⚡ **任务就是真实代码** —— `Taskfile.lua` 里每个任务是 Lua 函数，条件判断、参数、互相调用全部原生支持，不用跟 YAML 较劲。
-- 🌍 **全局任务** —— 在 `~/.config/hire/Taskfile.lua` 定义一次，任何目录下都能跑。
-- 🌙 **后台执行** —— `hire bstart` 让任务脱离终端常驻，关掉窗口照常运行。
-- 👀 **实时输出** —— `hire watch` 实时查看任意后台任务的日志；Ctrl+C 只退出查看、不杀任务。
-- 🔀 **多实例 + 安全门** —— 同名任务允许并发；hire 提示冲突风险并在启动前让你确认。
-- 🧩 **Shell 注册表** —— Windows 默认 pwsh、其他系统默认 bash；在 `config.lua` 注册自定义 shell，`--shell` 按次切换。
-- 📦 **单文件二进制** —— 约 8 MB 一个可执行文件，零运行时依赖。
+- 🧑‍💻 **taskfile 是真代码** —— 不玩 YAML 杂技。Lua 原生内嵌（零样板、单二进制）；
+  其它任何语言通过两动词 JSON 契约接入。
+- 🌍 **任意语言** —— `Taskfile.py`、`Taskfile.js`、`Taskfile.cpp` 与 Lua 同权：
+  在 `config.lua` 里声明运行时命令，该编译的 hire 编译并缓存，
+  `hire ls` 跨全部文件列任务。
+- 🌐 **全局任务** —— 在 `~/.config/hire/` 定义一次，任意目录可跑；工作目录的
+  项目文件同名时后者赢（附警告）。
+- 🌙 **后台执行** —— `hire bstart` 把任务从终端分离。关掉窗口任务照跑；
+  `watch` / `stop` / `clean` 管理全生命周期。
+- 🔁 **持久 shell** —— 任务内的命令复用一个活着的 shell 实例（`cd`/环境变量
+  延续），另有 `instance=0` export 模式配合 `eval`/`iex`。
+- 📦 **单二进制** —— 一个 ~8 MB 可执行文件，零运行时依赖。Python/Node/g++ 是
+  *你自己的* 工具链，按配置调用；hire 只内嵌 Lua。
 
-## 文档
+## 五分钟首跑
 
-| 文档 | 内容 |
-|---|---|
-| **[Taskfile 编写参考](docs/lua.md)** | 完整 `ctx` API、`args` 结构、任务声明形式、常用模式、调试技巧 |
-| [设计规格](docs/superpowers/specs/2026-08-21-tkx-design.md) | 架构决策、后台机制、shell 模型 |
-| [示例 Taskfile](testdata/Taskfile.lua) | 可运行的样例，含参数与 OS 分支 |
-
-## 快速开始
-
-### 安装
-
-**Scoop**（Windows）：
+**安装** —— Scoop（Windows）：
 
 ```powershell
 scoop bucket add XiaTian-AC https://github.com/XiaTian-AC/XiaTian-AC-bucket
 scoop install hire
 ```
 
-**Homebrew**（macOS/Linux）：
+Homebrew（macOS/Linux）：
 
 ```bash
 brew tap XiaTian-AC/XiaTian-AC-bucket
 brew install hire
 ```
 
-**从源码构建：**
+或下面的[源码构建](#源码构建)。
 
-```bash
-go install github.com/XiaTian-AC/hire@latest
-```
-
-### 写第一个 Taskfile
-
-创建 `~/.config/hire/Taskfile.lua`：
-
-```lua
-local tasks = {
-  hello = function(ctx)
-    ctx:echo("hello world")
-  end,
-}
-return tasks
-```
-
-### 运行
+**脚手架 + 首跑** —— 在任意空目录：
 
 ```powershell
-hire hello     # → hello world
-hire ls        # 列出所有任务
+hire init          # 生成可运行的 Taskfile.lua
+hire hello         # → hello from hire
 ```
 
-## 使用方法
+整个闭环就这么多：`hire init` 写一个带注释的起步文件，`hire <任务名>` 跑任务，
+`hire ls` 列任务。编辑 `Taskfile.lua` —— 任务是全局变量，没有包装表。
+
+**带上你自己的语言**：
+
+```powershell
+hire init --lang python    # 或 node / cpp
+```
+
+生成的文件会说 [`__hire__` 契约](docs/contract.md) —— hire 调用程序做任务发现，
+解析好的参数经 `HIRE_ARGS` 环境变量传入。在 `~/.config/hire/config.lua` 里声明
+运行时：
+
+```lua
+return {
+  runtimes = {
+    python = "python",
+    node   = "node",
+    cpp    = { build = "g++ -std=c++20 -O2 -o {out} {src}" },  -- 编译 + 缓存
+  },
+}
+```
+
+## 用法
 
 ### 带参数的任务
 
-声明的参数由 hire 校验；未知 flag 直接报错并列出允许项。
+hire 按每个任务声明的 schema 校验 CLI 参数 —— 未声明的 flag 直接拒绝并列出
+允许项，任何代码都不会跑。
 
 ```lua
-local tasks = {
-  release = {
-    desc = "test, commit, tag, push",
-    args = {
-      tag   = { type = "string", required = true, desc = "git tag, e.g. v0.1.2" },
-      force = { type = "bool", required = false, desc = "force push" },
-    },
-    run = function(ctx, args)
-      ctx:sh("go test ./...")
-      ctx:exec("git", {"tag", args.tag})          -- 不经 shell，无注入风险
-      if args.force then
-        ctx:sh("git push --force --tags")
-      else
-        ctx:sh("git push --tags")
-      end
-    end,
+release = task {
+  desc = "test, commit, tag, push",
+  args = {
+    tag   = req "git tag, e.g. v1.1.0",   -- 必填 string
+    force = bool "force push",            -- 开关
   },
+  run = function(args)
+    x.sh("go test ./...")
+    x.exec("git", {"tag", args.tag})       -- 不经 shell，无注入面
+    x.sh(args.force and "git push --force --tags" or "git push --tags")
+  end,
 }
-return tasks
 ```
 
 ```powershell
-hire release --tag v0.1.2
-hire help release            # 显示描述 + 参数类型清单
+hire release --tag v1.1.0 --force
+hire help release            # desc + 类型化参数表
+hire release --help          # 同上，任务级
 ```
 
 ### 后台生命周期
 
 ```powershell
-hire bstart dev-server       # 脱离终端启动
+hire bstart dev-server       # 分离启动；关终端照跑
 hire ls-running              # dev-server#1  pid 12345  running
-hire watch dev-server        # 实时看日志；Ctrl+C 只退出查看
-hire stop dev-server         # 杀掉整个进程树
-hire clean --older-than=7d   # 清理已结束的实例和日志
+hire watch dev-server        # 实时追日志；Ctrl+C 只退出查看器
+hire stop dev-server         # 杀整棵进程树
+hire clean --older-than=7d   # 清理已结束实例 + 日志
 ```
 
-### 常用命令
+`bstart` 对外部语言 taskfile 完全同权 —— 后台子进程重载同一份解析出的文件列表，
+不管它是什么语言写的。
+
+### 顺手命令
 
 ```powershell
-hire config                  # 查看生效配置（display + shells）
-hire ls-running              # 按 display.ls_running.time 窗口过滤（默认 1h）
-hire --taskfile .\dev\My.lua hello   # 用任意 Taskfile 跑任务，不动全局
-hire build --shell bash      # 本次运行指定 shell
+hire                          # 裸 hire：列任务 + 一行 usage 提示
+hire init                     # 生成起步 taskfile（lua 缺省）
+hire config                   # 打印生效配置（display + shells）
+hire --taskfile .\dev\My.cc hello    # 任意受支持扩展名，单文件隔离
+hire build --shell bash       # 单次运行指定注册 shell
+iex (hire env-setup)          # export 模式：收集的命令进你自己的 shell
 ```
 
-## 架构
+## 文档
 
-```mermaid
-flowchart TD
-    A["hire &lt;task&gt;"] --> B[CLI 分发<br/>internal/cli]
-    B --> C[config.lua<br/>shells + display]
-    B --> D[Taskfile.lua<br/>全局或 --taskfile]
-    C --> E[gopher-lua VM<br/>任务即函数]
-    D --> E
-    E --> F{模式？}
-    F -->|前台| G["ctx:sh / ctx:exec<br/>继承 stdio"]
-    F -->|bstart| H[detached 子进程<br/>hire _run name#N]
-    H --> I[("logs/name#N.log")]
-    H --> J[("run.json")]
-    I --> L[watch / stop / clean]
-    J --> L
+| 文档 | 内容 |
+|---|---|
+| [Lua 参考](docs/lua.md) | v2 语法：声明形式、`task{}`/`req`/`bool`、`x` API、持久实例（及其坑）、export 模式 |
+| [契约](docs/contract.md) | `__hire__` 两动词、discover JSON、`HIRE_ARGS` 形状、runtimes 配置、Python/Node/C++ 样板全文 |
+| [TOML 参考](docs/toml.md) | `Taskfile.toml` schema、内联 Lua `run`、严格性规则 |
+| [示例 taskfile](testdata/Taskfile.lua) | 覆盖主要形式的可运行样例 |
 
-    classDef entry fill:#3B82F6,stroke:#2563EB,color:#fff,stroke-width:2px
-    classDef process fill:#10B981,stroke:#059669,color:#fff,stroke-width:2px
-    classDef decision fill:#F59E0B,stroke:#D97706,color:#fff,stroke-width:2px
-    classDef store fill:#8B5CF6,stroke:#7C3AED,color:#fff,stroke-width:2px
-    classDef tools fill:#06B6D4,stroke:#0891B2,color:#fff,stroke-width:2px
+## 源码构建
 
-    class A,B,C,D,E,H process
-    class F decision
-    class G entry
-    class I,J store
-    class L tools
+module 名是 `hire`（裸名，不是托管路径），所以 `go install <repo>@latest`
+不可用 —— clone 后 build：
+
+```bash
+git clone https://github.com/XiaTian-AC/hire.git
+cd hire
+go build -o hire .
+# 跑测试：go test ./... && go test -tags integration ./integration/
 ```
 
 ## 配置
 
-配置目录为 `~/.config/hire/`（Windows 同样遵循 `XDG_CONFIG_HOME`）。
+文件都在 hire 配置目录下（所有平台都是 `~/.config/hire/`，认 `XDG_CONFIG_HOME`）：
 
 | 文件 | 用途 |
 |---|---|
-| `Taskfile.lua` | 全局任务定义。必须返回 `tasks` 表。 |
-| `config.lua` | 可选：自定义 shell 注册表 + 显示偏好。 |
-
-`config.lua` 选项：
+| `Taskfile.*` | 全局 taskfile —— 五个候选全部探测、合并加载。 |
+| `config.lua` | 可选：`shells` 注册表、`display` 选项、外部语言 `runtimes`。 |
 
 ```lua
 return {
   shells = {
     gitbash = "C:\\Program Files\\Git\\bin\\bash.exe",
-    mysh    = "/opt/mytool/bin/mysh",
   },
   display = {
     ls_running = {
-      time = "1h",          -- "0" 只显示 running · 30m/1h/2d/1w 为已结束任务的窗口
-      running_first = true, -- running 排在已结束之前
-      newest_first = true,  -- 组内最新在前
+      time = "1h",          -- "0" 只看运行中 · 30m/1h/2d/1w 已结束窗口
+      running_first = true,
+      newest_first = true,
     },
+  },
+  runtimes = {
+    python = "python",
+    node   = "node",
+    cpp    = { build = "g++ -std=c++20 -O2 -o {out} {src}" },
   },
 }
 ```
 
-用 `hire config` 查看当前生效值。完整选项说明见 [Taskfile 编写参考](docs/lua.md)。
-
-## ctx API（节选）
-
-每个任务收到一个 `ctx`。八个方法，全部冒号调用：
-
-| 方法 | 行为 |
-|---|---|
-| `ctx:sh(cmd, opts?)` | 通过解析出的 shell 执行；非零退出抛 Lua 错误 |
-| `ctx:exec(name, args?)` | 直接执行二进制——不经 shell、无注入 |
-| `ctx:run(name, args?)` | 调用同文件里的另一个任务 |
-| `ctx:echo(...)` | 打印到 stdout |
-| `ctx:ask(prompt, default?)` | 读一行输入；stdin 不可用（后台）时返回 default |
-| `ctx:cwd()` / `ctx:os()` | 工作目录 / `"windows"` \| `"linux"` \| `"darwin"` |
-
-读环境变量用 Lua 内置的 `os.getenv(name)`。
-
-完整 API、`args` 语义与安全注意事项见 [docs/lua.md](docs/lua.md)。
+`hire config` 查看生效值。
 
 ## 项目结构
 
 ```
-main.go                    入口，委托 internal/cli
+main.go                    入口，转 internal/cli
 internal/
-├── cli/                   命令分发（ls/bstart/watch/stop/clean/config…）
-├── config/                XDG 路径、config.lua 加载、时长工具
-├── taskfile/              Taskfile.lua 加载（函数/表格两种形式）
-├── runtime/               ctx 绑定：sh/exec/run/echo/ask/cwd/os
-├── argparse/              通用 --flag 解析器 + 严格 spec 校验
-├── shell/                 shell 解析，含 Windows Git Bash 探测链
-├── bg/                    registry、detached 启动器、进程管理、watch
-docs/lua.md                Taskfile 编写参考
+├── cli/                   命令分发（init/ls/bstart/watch/stop/clean/config…）
+├── adapter/               lua / toml / exec 适配器 -> 统一 Task 模型
+│   └── templates.go       hire init 样板（lua/python/node/cpp）
+├── config/                XDG 路径、config.lua（shells、display、runtimes）
+├── runtime/               任务执行：x 全局、持久 shell、export 模式
+├── argparse/              通用 --flag 解析、严格 schema 校验
+├── shell/                 shell 解析（含 Windows Git Bash 探测）
+├── bg/                    注册表、分离启动器、进程表、watch
+docs/                      lua.md、contract.md、toml.md
 testdata/Taskfile.lua      可运行示例
-integration/               端到端测试
+integration/               端到端测试（go test -tags integration）
 .goreleaser.yaml           多平台发布配置
-.scoop/ .brew/             包管理模板，由 CI 渲染
+.scoop/ .brew/             CI 渲染的包管理器模板
 ```
 
 ## 技术栈
 
 | 层 | 选择 |
 |---|---|
-| 核心 | Go 1.22+，仅标准库 |
-| 任务语言 | Lua 5.1，经 [gopher-lua](https://github.com/yuin/gopher-lua) 内嵌（无外部运行时） |
+| 核心 | Go，尽量只用标准库 |
+| 任务语言 | Lua 5.1 经 [gopher-lua](https://github.com/yuin/gopher-lua) 内嵌；Python/Node/C++ 走契约；TOML 经 [BurntSushi/toml](https://github.com/BurntSushi/toml) |
 | 发布 | [GoReleaser](https://goreleaser.com) + GitHub Actions |
-| 分发 | Scoop bucket + Homebrew tap，打 tag 自动更新哈希 |
 
-## CI/CD
+## 参与贡献
 
-推送 `v*` tag 触发发布流水线：多平台构建（windows/linux/darwin × amd64/arm64）、生成校验和、上传 GitHub Release——随后用新 SHA256 渲染 Scoop manifest 和 Homebrew formula 并提交到对应桶仓库。见 [.github/workflows/release.yml](.github/workflows/release.yml)。
-
-## 贡献
-
-1. Fork 本仓库
-2. 创建功能分支（`git checkout -b feature/amazing`）
-3. 提交改动（`git commit -m 'feat: add amazing feature'`）
-4. 推送分支（`git push origin feature/amazing`）
-5. 发起 Pull Request
-
-本地跑测试：`go test ./...` 与 `go test -tags integration ./integration/`。
+1. Fork、建分支、提交、推送、PR —— 常规流程。
+2. 先跑门禁：`go test ./...` 与 `go test -tags integration ./integration/`
+  （工具链缺失时外部语言用例自动 skip）。
 
 ## 许可证
 

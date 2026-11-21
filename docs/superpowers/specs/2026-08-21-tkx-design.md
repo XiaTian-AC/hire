@@ -1,7 +1,7 @@
 # tkx — Design Spec v1
 
 **Date:** 2026-08-21
-**Status:** Approved → implementation plan written
+**Status:** Approved → implemented. **Superseded:** the v1 Lua taskfile syntax (`local tasks = {...}` + `return`, colon-called `ctx`) was removed by hire v2 — see [2026-11-21-hire-v2-design.md](2026-11-21-hire-v2-design.md). Background-execution architecture (§ below) still describes the shipped behavior.
 **Stack:** Go + gopher-lua (embedded Lua 5.1), single self-contained binary, zero runtime deps
 
 ## 1. Overview
