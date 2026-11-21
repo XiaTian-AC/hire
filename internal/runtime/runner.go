@@ -6,7 +6,7 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"tkx/internal/taskfile"
+	"hire/internal/taskfile"
 )
 
 type Options struct {
@@ -26,7 +26,7 @@ func Run(f *taskfile.File, name string, args *lua.LTable, opts Options) error {
 	}
 	task, ok := f.Tasks[name]
 	if !ok {
-		return fmt.Errorf("task %q not found; run 'tkx ls' to list tasks", name)
+		return fmt.Errorf("task %q not found; run 'hire ls' to list tasks", name)
 	}
 	if err := callTask(f.L, c, task, args); err != nil {
 		return fmt.Errorf("task %q: %v", name, err)

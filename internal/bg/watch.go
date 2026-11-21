@@ -19,7 +19,7 @@ func Watch(logPath, id string, isAlive func() bool, out io.Writer) error {
 	signal.Notify(interrupt, os.Interrupt)
 	defer signal.Stop(interrupt)
 
-	fmt.Fprintf(out, "--- tkx watch %s (Ctrl+C to exit, task keeps running) ---\n", id)
+	fmt.Fprintf(out, "--- hire watch %s (Ctrl+C to exit, task keeps running) ---\n", id)
 
 	var offset int64
 	drain(f, out, &offset)

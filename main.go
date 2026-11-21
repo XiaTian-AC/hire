@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"tkx/internal/cli"
+	"hire/internal/cli"
 )
 
 var version = "dev"

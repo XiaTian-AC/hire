@@ -4,7 +4,7 @@
 
 </div>
 
-<h1 align="center">tkx</h1>
+<h1 align="center">hire</h1>
 
 <p align="center">
   <strong>A modern task runner with Lua taskfiles and built-in background task management.</strong>
@@ -19,8 +19,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XiaTian-AC/taskx/releases"><img src="https://img.shields.io/github/v/release/XiaTian-AC/taskx?style=flat&color=blue" alt="Release" /></a>
-  <a href="https://github.com/XiaTian-AC/taskx/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/XiaTian-AC/taskx/release.yml?branch=master&label=release%20ci&style=flat" alt="Release CI" /></a>
+  <a href="https://github.com/XiaTian-AC/hire/releases"><img src="https://img.shields.io/github/v/release/XiaTian-AC/hire?style=flat&color=blue" alt="Release" /></a>
+  <a href="https://github.com/XiaTian-AC/hire/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/XiaTian-AC/hire/release.yml?branch=master&label=release%20ci&style=flat" alt="Release CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=flat" alt="License" /></a>
 </p>
 
@@ -32,13 +32,13 @@
 
 ---
 
-## Why tkx?
+## Why hire?
 
 - ⚡ **Tasks are real code** — `Taskfile.lua` tasks are Lua functions with conditionals, parameters, and inter-task calls. No YAML gymnastics.
-- 🌍 **Global tasks** — Define once in `~/.config/taskx/Taskfile.lua`, run from any directory.
-- 🌙 **Background execution** — `tkx bstart` detaches a task from your terminal. Close the window, the job keeps running.
-- 👀 **Live output** — `tkx watch` tails any background job's log in real time; Ctrl+C leaves the viewer without killing the job.
-- 🔀 **Multi-instance with a safety gate** — Same task can run twice; tkx warns about conflicts and asks before launching.
+- 🌍 **Global tasks** — Define once in `~/.config/hire/Taskfile.lua`, run from any directory.
+- 🌙 **Background execution** — `hire bstart` detaches a task from your terminal. Close the window, the job keeps running.
+- 👀 **Live output** — `hire watch` tails any background job's log in real time; Ctrl+C leaves the viewer without killing the job.
+- 🔀 **Multi-instance with a safety gate** — Same task can run twice; hire warns about conflicts and asks before launching.
 - 🧩 **Shell registry** — Default pwsh on Windows, bash elsewhere. Register custom shells in `config.lua`, pick per-run with `--shell`.
 - 📦 **Single binary** — One ~8 MB executable, zero runtime dependencies.
 
@@ -58,25 +58,25 @@
 
 ```powershell
 scoop bucket add XiaTian-AC https://github.com/XiaTian-AC/XiaTian-AC-bucket
-scoop install tkx
+scoop install hire
 ```
 
 **Homebrew** (macOS/Linux):
 
 ```bash
 brew tap XiaTian-AC/XiaTian-AC-bucket
-brew install tkx
+brew install hire
 ```
 
 **From source:**
 
 ```bash
-go install github.com/XiaTian-AC/taskx@latest
+go install github.com/XiaTian-AC/hire@latest
 ```
 
 ### Write your first Taskfile
 
-Create `~/.config/taskx/Taskfile.lua`:
+Create `~/.config/hire/Taskfile.lua`:
 
 ```lua
 local tasks = {
@@ -90,15 +90,15 @@ return tasks
 ### Run
 
 ```powershell
-tkx hello     # → hello world
-tkx ls        # list all tasks
+hire hello     # → hello world
+hire ls        # list all tasks
 ```
 
 ## Usage
 
 ### Tasks with arguments
 
-Declared args get validated by tkx; unknown flags are rejected with the allowed list.
+Declared args get validated by hire; unknown flags are rejected with the allowed list.
 
 ```lua
 local tasks = {
@@ -123,41 +123,41 @@ return tasks
 ```
 
 ```powershell
-tkx release --tag v0.1.2
-tkx help release            # shows desc + typed arg list
+hire release --tag v0.1.2
+hire help release            # shows desc + typed arg list
 ```
 
 ### Background lifecycle
 
 ```powershell
-tkx bstart dev-server       # detach; survives terminal close
-tkx ls-running              # dev-server#1  pid 12345  running
-tkx watch dev-server        # live tail; Ctrl+C exits viewer only
-tkx stop dev-server         # kills the process tree
-tkx clean --older-than=7d   # prune ended instances + logs
+hire bstart dev-server       # detach; survives terminal close
+hire ls-running              # dev-server#1  pid 12345  running
+hire watch dev-server        # live tail; Ctrl+C exits viewer only
+hire stop dev-server         # kills the process tree
+hire clean --older-than=7d   # prune ended instances + logs
 ```
 
 ### Handy commands
 
 ```powershell
-tkx config                  # dump effective config (display + shells)
-tkx ls-running              # filtered by display.ls_running.time (default 1h)
-tkx --taskfile .\dev\My.lua hello   # run from any Taskfile without touching global
-tkx build --shell bash      # pick a registered shell for one run
+hire config                  # dump effective config (display + shells)
+hire ls-running              # filtered by display.ls_running.time (default 1h)
+hire --taskfile .\dev\My.lua hello   # run from any Taskfile without touching global
+hire build --shell bash      # pick a registered shell for one run
 ```
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    A["tkx &lt;task&gt;"] --> B[CLI dispatch<br/>internal/cli]
+    A["hire &lt;task&gt;"] --> B[CLI dispatch<br/>internal/cli]
     B --> C[config.lua<br/>shells + display]
     B --> D[Taskfile.lua<br/>global or --taskfile]
     C --> E[gopher-lua VM<br/>tasks as functions]
     D --> E
     E --> F{mode?}
     F -->|foreground| G["ctx:sh / ctx:exec<br/>stdio inherited"]
-    F -->|bstart| H[detached child<br/>tkx _run name#N]
+    F -->|bstart| H[detached child<br/>hire _run name#N]
     H --> I[("logs/name#N.log")]
     H --> J[("run.json")]
     I --> L[watch / stop / clean]
@@ -178,7 +178,7 @@ flowchart TD
 
 ## Configuration
 
-Files live under the tkx config directory (`~/.config/taskx/` on Windows too, honoring `XDG_CONFIG_HOME`).
+Files live under the hire config directory (`~/.config/hire/` on Windows too, honoring `XDG_CONFIG_HOME`).
 
 | File | Purpose |
 |---|---|
@@ -203,7 +203,7 @@ return {
 }
 ```
 
-Inspect the effective values with `tkx config`. Full option reference: [Taskfile Authoring Reference](docs/lua.md).
+Inspect the effective values with `hire config`. Full option reference: [Taskfile Authoring Reference](docs/lua.md).
 
 ## ctx API (excerpt)
 

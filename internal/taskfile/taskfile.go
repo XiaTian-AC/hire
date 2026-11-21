@@ -8,7 +8,7 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"tkx/internal/argparse"
+	"hire/internal/argparse"
 )
 
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
@@ -51,7 +51,7 @@ func Load(path string) (*File, error) {
 		}
 		name := string(key)
 		if !nameRe.MatchString(name) {
-			fmt.Fprintf(os.Stderr, "tkx: warning: skipping task %q (invalid name)\n", name)
+			fmt.Fprintf(os.Stderr, "hire: warning: skipping task %q (invalid name)\n", name)
 			return
 		}
 		switch tv := v.(type) {
@@ -61,7 +61,7 @@ func Load(path string) (*File, error) {
 		case *lua.LTable:
 			run, ok := tv.RawGetString("run").(*lua.LFunction)
 			if !ok {
-				fmt.Fprintf(os.Stderr, "tkx: warning: skipping task %q (table form needs a run function)\n", name)
+				fmt.Fprintf(os.Stderr, "hire: warning: skipping task %q (table form needs a run function)\n", name)
 				return
 			}
 			task := &Task{Name: name, Fn: run}
@@ -93,7 +93,7 @@ func Load(path string) (*File, error) {
 			f.Tasks[name] = task
 			f.Order = append(f.Order, name)
 		default:
-			fmt.Fprintf(os.Stderr, "tkx: warning: skipping task %q (must be function or table)\n", name)
+			fmt.Fprintf(os.Stderr, "hire: warning: skipping task %q (must be function or table)\n", name)
 		}
 	})
 	if len(f.Order) == 0 {

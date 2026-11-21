@@ -76,7 +76,7 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          sed "s/__VERSION__/${VERSION}/g" .scoop/tkx.json.tmpl > manifest.json
+          sed "s/__VERSION__/${VERSION}/g" .scoop/hire.json.tmpl > manifest.json
 
       - name: Publish manifest to scoop bucket
         env:
@@ -86,7 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           SHA=$(curl -fsSL "https://github.com/${{ github.repository }}/releases/download/${TAG}/checksums.txt" \
-            | awk '$2=="tkx-windows-amd64.zip"{print $1}')
+            | awk '$2=="hire-windows-amd64.zip"{print $1}')
           if [ -z "$SHA" ]; then
             echo "::error::Failed to extract windows SHA256 from checksums.txt for ${TAG}"
             exit 1
@@ -95,7 +95,7 @@ jobs:
           grep -q "sha256:${SHA}" manifest.json || { echo "::error::SHA256 placeholder not substituted"; exit 1; }
           EXISTING_SHA=$(curl -fsSL \
             -H "Authorization: token ${SCOOP_BUCKET_TOKEN}" \
-            "https://api.github.com/repos/XiaTian-AC/XiaTian-AC-bucket/contents/tkx.json" \
+            "https://api.github.com/repos/XiaTian-AC/XiaTian-AC-bucket/contents/hire.json" \
             | python3 -c "import sys,json;print(json.load(sys.stdin).get('sha',''))" 2>/dev/null || true)
           PAYLOAD="{\"message\":\"Release v${VERSION}\",\"content\":\"$(base64 -w0 manifest.json)\""
           if [ -n "$EXISTING_SHA" ]; then PAYLOAD="$PAYLOAD,\"sha\":\"$EXISTING_SHA\""; fi
@@ -104,7 +104,7 @@ jobs:
             -H "Authorization: token ${SCOOP_BUCKET_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -d "$PAYLOAD" \
-            "https://api.github.com/repos/XiaTian-AC/XiaTian-AC-bucket/contents/tkx.json"
+            "https://api.github.com/repos/XiaTian-AC/XiaTian-AC-bucket/contents/hire.json"
 
   update-homebrew-tap:
     needs: release
@@ -134,7 +134,7 @@ jobs:
           set -euo pipefail
           CHK=$(mktemp)
           curl -fsSL "https://github.com/${{ github.repository }}/releases/download/${TAG}/checksums.txt" -o "$CHK"
-          sha() { awk -v f="tkx-$1.tar.gz" '$2==f{print $1}' "$CHK"; }
+          sha() { awk -v f="hire-$1.tar.gz" '$2==f{print $1}' "$CHK"; }
           DARWIN_ARM64=$(sha darwin-arm64)
           DARWIN_AMD64=$(sha darwin-amd64)
           LINUX_ARM64=$(sha linux-arm64)
@@ -150,7 +150,7 @@ jobs:
               -e "s/__SHA256_DARWIN_AMD64__/${DARWIN_AMD64}/g" \
               -e "s/__SHA256_LINUX_ARM64__/${LINUX_ARM64}/g" \
               -e "s/__SHA256_LINUX_AMD64__/${LINUX_AMD64}/g" \
-              .brew/tkx.rb.tmpl > formula.rb
+              .brew/hire.rb.tmpl > formula.rb
 
       - name: Publish formula to Homebrew tap
         env:
@@ -161,7 +161,7 @@ jobs:
           TAP_REPO="XiaTian-AC/homebrew-XiaTian-AC-bucket"
           EXISTING_SHA=$(curl -fsSL \
             -H "Authorization: token ${SCOOP_BUCKET_TOKEN}" \
-            "https://api.github.com/repos/${TAP_REPO}/contents/Formula/tkx.rb" \
+            "https://api.github.com/repos/${TAP_REPO}/contents/Formula/hire.rb" \
             | python3 -c "import sys,json;print(json.load(sys.stdin).get('sha',''))" 2>/dev/null || true)
           PAYLOAD="{\"message\":\"Release v${VERSION}\",\"content\":\"$(base64 -w0 formula.rb)\""
           if [ -n "$EXISTING_SHA" ]; then PAYLOAD="$PAYLOAD,\"sha\":\"$EXISTING_SHA\""; fi
@@ -170,4 +170,4 @@ jobs:
             -H "Authorization: token ${SCOOP_BUCKET_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -d "$PAYLOAD" \
-            "https://api.github.com/repos/${TAP_REPO}/contents/Formula/tkx.rb"
+            "https://api.github.com/repos/${TAP_REPO}/contents/Formula/hire.rb"

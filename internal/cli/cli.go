@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"tkx/internal/argparse"
-	"tkx/internal/bg"
-	"tkx/internal/config"
-	"tkx/internal/runtime"
-	"tkx/internal/taskfile"
+	"hire/internal/argparse"
+	"hire/internal/bg"
+	"hire/internal/config"
+	"hire/internal/runtime"
+	"hire/internal/taskfile"
 )
 
 type Deps struct {
@@ -63,19 +63,19 @@ func Run(argv []string, d Deps) int {
 		usage(d.Stdout)
 		return 0
 	case "version", "--version":
-		fmt.Fprintf(d.Stdout, "tkx %s\n", d.Version)
+		fmt.Fprintf(d.Stdout, "hire %s\n", d.Version)
 		return 0
 	case "ls":
 		return cmdLs(d)
 	case "start", "run":
 		if len(rest) == 0 {
-			fmt.Fprintf(d.Stderr, "tkx: usage: tkx %s <task> [args]\n", cmd)
+			fmt.Fprintf(d.Stderr, "hire: usage: hire %s <task> [args]\n", cmd)
 			return 2
 		}
 		return cmdRunTask(rest, d)
 	case "bstart":
 		if len(rest) == 0 {
-			fmt.Fprintln(d.Stderr, "tkx: usage: tkx bstart <task> [args]")
+			fmt.Fprintln(d.Stderr, "hire: usage: hire bstart <task> [args]")
 			return 2
 		}
 		return cmdBstart(rest, d)
@@ -85,13 +85,13 @@ func Run(argv []string, d Deps) int {
 		return cmdClean(rest, d)
 	case "watch":
 		if len(rest) == 0 {
-			fmt.Fprintln(d.Stderr, "tkx: usage: tkx watch <name>[#N]")
+			fmt.Fprintln(d.Stderr, "hire: usage: hire watch <name>[#N]")
 			return 2
 		}
 		return cmdWatch(rest[0], d)
 	case "stop":
 		if len(rest) == 0 {
-			fmt.Fprintln(d.Stderr, "tkx: usage: tkx stop <name>[#N]")
+			fmt.Fprintln(d.Stderr, "hire: usage: hire stop <name>[#N]")
 			return 2
 		}
 		return cmdStop(rest[0], d)
@@ -109,20 +109,20 @@ func Run(argv []string, d Deps) int {
 func usage(out io.Writer) {
 	cfgDir, _ := config.ConfigDir()
 	tfPath, _ := config.TaskfilePath()
-	fmt.Fprintf(out, `tkx - task runner (global tasks + background execution)
+	fmt.Fprintf(out, `hire - task runner (global tasks + background execution)
 
 Usage:
-  tkx <task> [args]        run a task in the foreground
-  tkx bstart <task> [args] run a task in the background (detached)
-  tkx ls                   list tasks
-  tkx ls-running           list background instances ( background instances ( filtered by display.ls_running.time)
-  tkx clean [--all|--older-than <dur>]  remove ended instances (and their logs)
-  tkx watch <name>[#N]     tail a background instance's log live
-  tkx stop <name>[#N]      stop background instance(s)
-  tkx config [section]     show effective config (all | display | shells)
-  tkx run <task> [args]    force-run a task (builtin-name collision escape hatch)
-  tkx help [task]          help (or task details)
-  tkx version              print version
+  hire <task> [args]        run a task in the foreground
+  hire bstart <task> [args] run a task in the background (detached)
+  hire ls                   list tasks
+  hire ls-running           list background instances (filtered by display.ls_running.time)
+  hire clean [--all|--older-than <dur>]  remove ended instances (and their logs)
+  hire watch <name>[#N]     tail a background instance's log live
+  hire stop <name>[#N]      stop background instance(s)
+  hire config [section]     show effective config (all | display | shells)
+  hire run <task> [args]    force-run a task (builtin-name collision escape hatch)
+  hire help [task]          help (or task details)
+  hire version              print version
 
 Flags:
   --shell <name>           select shell for this run
@@ -132,7 +132,7 @@ Files:
   Taskfile: %s
   config:   %s/config.lua
 
-Tasks are defined in Taskfile.lua under the tkx config directory.
+Tasks are defined in Taskfile.lua under the hire config directory.
 See config.lua for display options and shell registry.
 `, tfPath, cfgDir)
 }
@@ -209,7 +209,7 @@ func extractTaskfile(argv []string) (string, []string) {
 func cmdLs(d Deps) int {
 	f, _, err := loadTaskfile(d)
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	defer f.Close()
@@ -259,18 +259,18 @@ func cmdRunTask(argv []string, d Deps) int {
 	shellName, taskArgs := extractShell(argv[1:])
 	f, shells, err := loadTaskfile(d)
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	defer f.Close()
 	task, ok := f.Get(name)
 	if !ok {
-		fmt.Fprintf(d.Stderr, "tkx: task %q not found; run 'tkx ls'\n", name)
+		fmt.Fprintf(d.Stderr, "hire: task %q not found; run 'hire ls'\n", name)
 		return 1
 	}
 	parsed, err := argparse.Parse(taskArgs, task.Args)
 	if err != nil {
-		fmt.Fprintf(d.Stderr, "tkx: task %q: %v\n", name, err)
+		fmt.Fprintf(d.Stderr, "hire: task %q: %v\n", name, err)
 		return 1
 	}
 	argsTable := argparse.ToLuaTable(f.L, parsed)
@@ -279,7 +279,7 @@ func cmdRunTask(argv []string, d Deps) int {
 		Stdout: d.Stdout, Stderr: d.Stderr, Stdin: d.Stdin,
 	})
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	return 0
@@ -290,28 +290,28 @@ func cmdBstart(argv []string, d Deps) int {
 	shellName, taskArgs := extractShell(argv[1:])
 	f, shells, err := loadTaskfile(d)
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	defer f.Close()
 	task, ok := f.Get(name)
 	if !ok {
-		fmt.Fprintf(d.Stderr, "tkx: task %q not found; run 'tkx ls'\n", name)
+		fmt.Fprintf(d.Stderr, "hire: task %q not found; run 'hire ls'\n", name)
 		return 1
 	}
 	_, err = argparse.Parse(taskArgs, task.Args)
 	if err != nil {
-		fmt.Fprintf(d.Stderr, "tkx: task %q: %v\n", name, err)
+		fmt.Fprintf(d.Stderr, "hire: task %q: %v\n", name, err)
 		return 1
 	}
 	dataDir, err := config.EnsureDataDir()
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	running, err := bg.Running(dataDir, name)
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	if len(running) > 0 {
@@ -336,10 +336,10 @@ func cmdBstart(argv []string, d Deps) int {
 		DataDir:   dataDir,
 	})
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
-	fmt.Fprintf(d.Stdout, "started %s (pid %d)\nlog: %s\nwatch: tkx watch %s\nstop:  tkx stop %s\n",
+	fmt.Fprintf(d.Stdout, "started %s (pid %d)\nlog: %s\nwatch: hire watch %s\nstop:  hire stop %s\n",
 		inst.ID, inst.PID, inst.Log, inst.ID, inst.ID)
 	return 0
 }
@@ -347,12 +347,12 @@ func cmdBstart(argv []string, d Deps) int {
 func cmdLsRunning(d Deps) int {
 	dataDir, err := config.DataDir()
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	all, err := bg.Snapshot(dataDir)
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	if len(all) == 0 {
@@ -361,7 +361,7 @@ func cmdLsRunning(d Deps) int {
 	}
 	disp, err := loadDisplay(d)
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	now := time.Now()
@@ -409,7 +409,7 @@ func cmdLsRunning(d Deps) int {
 func cmdClean(argv []string, d Deps) int {
 	dataDir, err := config.DataDir()
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	olderThan := ""
@@ -424,14 +424,14 @@ func cmdClean(argv []string, d Deps) int {
 	}
 	all, err := bg.Snapshot(dataDir)
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	var threshold time.Duration
 	if olderThan != "" {
 		threshold, err = config.ParseDuration(olderThan)
 		if err != nil {
-			fmt.Fprintf(d.Stderr, "tkx: --older-than: %v\n", err)
+			fmt.Fprintf(d.Stderr, "hire: --older-than: %v\n", err)
 			return 2
 		}
 	}
@@ -450,7 +450,7 @@ func cmdClean(argv []string, d Deps) int {
 	}
 	for _, inst := range toRemove {
 		if err := bg.RemoveInstance(dataDir, inst.ID); err != nil {
-			fmt.Fprintf(d.Stderr, "tkx: remove %s: %v\n", inst.ID, err)
+			fmt.Fprintf(d.Stderr, "hire: remove %s: %v\n", inst.ID, err)
 		}
 	}
 	if olderThan == "" {
@@ -464,24 +464,24 @@ func cmdClean(argv []string, d Deps) int {
 func cmdWatch(ref string, d Deps) int {
 	dataDir, err := config.DataDir()
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	all, err := bg.Snapshot(dataDir)
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	inst, err := findInstance(all, ref)
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	isAlive := func() bool {
 		return inst.Status == "running" && bg.Alive(inst.PID)
 	}
 	if err := bg.Watch(inst.Log, inst.ID, isAlive, d.Stdout); err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	return 0
@@ -490,12 +490,12 @@ func cmdWatch(ref string, d Deps) int {
 func cmdStop(ref string, d Deps) int {
 	dataDir, err := config.DataDir()
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	all, err := bg.Snapshot(dataDir)
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	var targets []bg.Instance
@@ -513,7 +513,7 @@ func cmdStop(ref string, d Deps) int {
 					return 0
 				}
 			}
-			fmt.Fprintf(d.Stderr, "tkx: no instance %q\n", ref)
+			fmt.Fprintf(d.Stderr, "hire: no instance %q\n", ref)
 			return 1
 		}
 	} else {
@@ -541,7 +541,7 @@ func cmdStop(ref string, d Deps) int {
 		if !bg.Alive(inst.PID) {
 			fmt.Fprintf(d.Stdout, "%s: process already gone\n", inst.ID)
 		} else if err := bg.Stop(inst.PID); err != nil {
-			fmt.Fprintf(d.Stderr, "tkx: stop %s: %v\n", inst.ID, err)
+			fmt.Fprintf(d.Stderr, "hire: stop %s: %v\n", inst.ID, err)
 		} else {
 			fmt.Fprintf(d.Stdout, "stopped %s\n", inst.ID)
 		}
@@ -553,12 +553,12 @@ func cmdStop(ref string, d Deps) int {
 func cmdConfig(argv []string, d Deps) int {
 	cfgDir, err := config.ConfigDir()
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	disp, shells, err := config.Load(cfgDir)
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 
@@ -569,7 +569,7 @@ func cmdConfig(argv []string, d Deps) int {
 	switch section {
 	case "all", "display", "shells":
 	default:
-		fmt.Fprintf(d.Stderr, "tkx: unknown config section %q (use: all | display | shells)\n", section)
+		fmt.Fprintf(d.Stderr, "hire: unknown config section %q (use: all | display | shells)\n", section)
 		return 2
 	}
 
@@ -628,18 +628,18 @@ func cmdInternalRun(argv []string, d Deps) int {
 	}
 	f, shells, err := loadTaskfile(d)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "tkx: %v\n", err)
+		fmt.Fprintf(os.Stderr, "hire: %v\n", err)
 		return 1
 	}
 	defer f.Close()
 	task, ok := f.Get(name)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "tkx: task %q not found\n", name)
+		fmt.Fprintf(os.Stderr, "hire: task %q not found\n", name)
 		return 1
 	}
 	parsed, err := argparse.Parse(taskArgs, task.Args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "tkx: %v\n", err)
+		fmt.Fprintf(os.Stderr, "hire: %v\n", err)
 		return 1
 	}
 	argsTable := argparse.ToLuaTable(f.L, parsed)
@@ -650,7 +650,7 @@ func cmdInternalRun(argv []string, d Deps) int {
 		Background: true,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "tkx: %v\n", err)
+		fmt.Fprintf(os.Stderr, "hire: %v\n", err)
 		exitCode = 1
 	}
 	if id != "" {
@@ -663,16 +663,16 @@ func cmdInternalRun(argv []string, d Deps) int {
 func cmdHelpTask(name string, d Deps) int {
 	f, _, err := loadTaskfile(d)
 	if err != nil {
-		fmt.Fprintln(d.Stderr, "tkx:", err)
+		fmt.Fprintln(d.Stderr, "hire:", err)
 		return 1
 	}
 	defer f.Close()
 	task, ok := f.Get(name)
 	if !ok {
-		fmt.Fprintf(d.Stderr, "tkx: task %q not found\n", name)
+		fmt.Fprintf(d.Stderr, "hire: task %q not found\n", name)
 		return 1
 	}
-	fmt.Fprintf(d.Stdout, "tkx %s\n", name)
+	fmt.Fprintf(d.Stdout, "hire %s\n", name)
 	if task.Desc != "" {
 		fmt.Fprintf(d.Stdout, "  %s\n", task.Desc)
 	}

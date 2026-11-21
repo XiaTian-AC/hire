@@ -15,10 +15,10 @@ import (
 // entry so the parent can collect the exit status, but the process
 // is dead. syscall.Kill(pid, 0) returns 0 (success) for zombies.
 //
-// In production (the launcher code), Stop() is called by tkx stop on
+// In production (the launcher code), Stop() is called by hire stop on
 // the foreground process which still holds cmd.Wait() open via
 // cmd.Process, so zombies are normally reaped automatically. But
-// if tkx ever runs in an environment where signals to detached
+// if hire ever runs in an environment where signals to detached
 // children can't reach (sandboxed CI runners, certain containers)
 // Stop needs to be a no-op on dead pids.
 //

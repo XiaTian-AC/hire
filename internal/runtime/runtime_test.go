@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"tkx/internal/taskfile"
+	"hire/internal/taskfile"
 )
 
 func writeTaskfile(t *testing.T, content string) *taskfile.File {
@@ -88,10 +88,10 @@ func TestRunChain(t *testing.T) {
 }
 
 func TestRunEnvOs(t *testing.T) {
-	t.Setenv("TKX_TEST_ENV", "envval")
+	t.Setenv("HIRE_TEST_ENV", "envval")
 	f := writeTaskfile(t, `return {
   info = function(ctx)
-    ctx:echo("env=" .. tostring(os.getenv("TKX_TEST_ENV")))
+    ctx:echo("env=" .. tostring(os.getenv("HIRE_TEST_ENV")))
     ctx:echo("os=" .. tostring(ctx:os()))
   end,
 }`)

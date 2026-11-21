@@ -12,8 +12,8 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"tkx/internal/shell"
-	"tkx/internal/taskfile"
+	"hire/internal/shell"
+	"hire/internal/taskfile"
 )
 
 type Ctx struct {

@@ -37,11 +37,11 @@ func buildBinary(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		suffix = ".exe"
 	}
-	dir, err := os.MkdirTemp("", "tkx-integration-")
+	dir, err := os.MkdirTemp("", "hire-integration-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(dir, "tkx.test"+suffix)
+	bin := filepath.Join(dir, "hire.test"+suffix)
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -70,8 +70,8 @@ func runBin(t *testing.T, bin string, args ...string) (string, int) {
 
 func TestIntegrationFlow(t *testing.T) {
 	bin := buildBinary(t)
-	cfgDir, _ := os.MkdirTemp("", "tkx-cfg-")
-	dataDir, _ := os.MkdirTemp("", "tkx-data-")
+	cfgDir, _ := os.MkdirTemp("", "hire-cfg-")
+	dataDir, _ := os.MkdirTemp("", "hire-data-")
 	t.Setenv("XDG_CONFIG_HOME", cfgDir)
 	t.Setenv("XDG_DATA_HOME", dataDir)
 
@@ -96,7 +96,7 @@ func TestIntegrationFlow(t *testing.T) {
     run = function(ctx, args) ctx:echo("tag=" .. args.tag) end,
   },
 }`
-	tfDir := filepath.Join(cfgDir, "taskx")
+	tfDir := filepath.Join(cfgDir, "hire")
 	os.MkdirAll(tfDir, 0o755)
 	os.WriteFile(filepath.Join(tfDir, "Taskfile.lua"), []byte(taskfile), 0o644)
 
@@ -167,7 +167,7 @@ func TestIntegrationFlow(t *testing.T) {
 	if !strings.Contains(out, "started quick#2") {
 		t.Fatalf("bstart quick #2: %q", out)
 	}
-	logsDir := filepath.Join(dataDir, "taskx", "logs")
+	logsDir := filepath.Join(dataDir, "hire", "logs")
 	entries, _ := os.ReadDir(logsDir)
 	for _, f := range entries {
 		if strings.Contains(f.Name(), "quick#1") {

@@ -14,7 +14,7 @@ func TestConfigDirXDG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(dir, "taskx")
+	want := filepath.Join(dir, "hire")
 	if got != want {
 		t.Errorf("ConfigDir() = %q, want %q", got, want)
 	}
@@ -27,7 +27,7 @@ func TestDataDirXDG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(dir, "taskx")
+	want := filepath.Join(dir, "hire")
 	if got != want {
 		t.Errorf("DataDir() = %q, want %q", got, want)
 	}

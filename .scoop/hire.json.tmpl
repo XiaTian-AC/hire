@@ -1,0 +1,32 @@
+{
+    "version": "__VERSION__",
+    "description": "A modern task runner with Lua taskfiles and built-in background task management. Global tasks + bstart/watch/stop.",
+    "homepage": "https://github.com/XiaTian-AC/hire",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/XiaTian-AC/hire/releases/download/v__VERSION__/hire-windows-amd64.zip",
+            "hash": "sha256:__SHA256__",
+            "bin": [
+                [
+                    "hire.exe",
+                    "hire"
+                ]
+            ]
+        }
+    },
+    "checkver": {
+        "github": "https://github.com/XiaTian-AC/hire"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/XiaTian-AC/hire/releases/download/v$version/hire-windows-amd64.zip",
+                "hash": {
+                    "url": "https://github.com/XiaTian-AC/hire/releases/download/v$version/checksums.txt",
+                    "regex": "$sha256\\s+hire-windows-amd64.zip"
+                }
+            }
+        }
+    }
+}

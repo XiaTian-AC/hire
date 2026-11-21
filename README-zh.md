@@ -4,7 +4,7 @@
 
 </div>
 
-<h1 align="center">tkx</h1>
+<h1 align="center">hire</h1>
 
 <p align="center">
   <strong>现代任务运行器：Lua 任务文件 + 内置后台任务管理。</strong>
@@ -19,8 +19,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/XiaTian-AC/taskx/releases"><img src="https://img.shields.io/github/v/release/XiaTian-AC/taskx?style=flat&color=blue" alt="Release" /></a>
-  <a href="https://github.com/XiaTian-AC/taskx/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/XiaTian-AC/taskx/release.yml?branch=master&label=release%20ci&style=flat" alt="Release CI" /></a>
+  <a href="https://github.com/XiaTian-AC/hire/releases"><img src="https://img.shields.io/github/v/release/XiaTian-AC/hire?style=flat&color=blue" alt="Release" /></a>
+  <a href="https://github.com/XiaTian-AC/hire/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/XiaTian-AC/hire/release.yml?branch=master&label=release%20ci&style=flat" alt="Release CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=flat" alt="License" /></a>
 </p>
 
@@ -32,13 +32,13 @@
 
 ---
 
-## 为什么选 tkx？
+## 为什么选 hire？
 
 - ⚡ **任务就是真实代码** —— `Taskfile.lua` 里每个任务是 Lua 函数，条件判断、参数、互相调用全部原生支持，不用跟 YAML 较劲。
-- 🌍 **全局任务** —— 在 `~/.config/taskx/Taskfile.lua` 定义一次，任何目录下都能跑。
-- 🌙 **后台执行** —— `tkx bstart` 让任务脱离终端常驻，关掉窗口照常运行。
-- 👀 **实时输出** —— `tkx watch` 实时查看任意后台任务的日志；Ctrl+C 只退出查看、不杀任务。
-- 🔀 **多实例 + 安全门** —— 同名任务允许并发；tkx 提示冲突风险并在启动前让你确认。
+- 🌍 **全局任务** —— 在 `~/.config/hire/Taskfile.lua` 定义一次，任何目录下都能跑。
+- 🌙 **后台执行** —— `hire bstart` 让任务脱离终端常驻，关掉窗口照常运行。
+- 👀 **实时输出** —— `hire watch` 实时查看任意后台任务的日志；Ctrl+C 只退出查看、不杀任务。
+- 🔀 **多实例 + 安全门** —— 同名任务允许并发；hire 提示冲突风险并在启动前让你确认。
 - 🧩 **Shell 注册表** —— Windows 默认 pwsh、其他系统默认 bash；在 `config.lua` 注册自定义 shell，`--shell` 按次切换。
 - 📦 **单文件二进制** —— 约 8 MB 一个可执行文件，零运行时依赖。
 
@@ -58,25 +58,25 @@
 
 ```powershell
 scoop bucket add XiaTian-AC https://github.com/XiaTian-AC/XiaTian-AC-bucket
-scoop install tkx
+scoop install hire
 ```
 
 **Homebrew**（macOS/Linux）：
 
 ```bash
 brew tap XiaTian-AC/XiaTian-AC-bucket
-brew install tkx
+brew install hire
 ```
 
 **从源码构建：**
 
 ```bash
-go install github.com/XiaTian-AC/taskx@latest
+go install github.com/XiaTian-AC/hire@latest
 ```
 
 ### 写第一个 Taskfile
 
-创建 `~/.config/taskx/Taskfile.lua`：
+创建 `~/.config/hire/Taskfile.lua`：
 
 ```lua
 local tasks = {
@@ -90,15 +90,15 @@ return tasks
 ### 运行
 
 ```powershell
-tkx hello     # → hello world
-tkx ls        # 列出所有任务
+hire hello     # → hello world
+hire ls        # 列出所有任务
 ```
 
 ## 使用方法
 
 ### 带参数的任务
 
-声明的参数由 tkx 校验；未知 flag 直接报错并列出允许项。
+声明的参数由 hire 校验；未知 flag 直接报错并列出允许项。
 
 ```lua
 local tasks = {
@@ -123,41 +123,41 @@ return tasks
 ```
 
 ```powershell
-tkx release --tag v0.1.2
-tkx help release            # 显示描述 + 参数类型清单
+hire release --tag v0.1.2
+hire help release            # 显示描述 + 参数类型清单
 ```
 
 ### 后台生命周期
 
 ```powershell
-tkx bstart dev-server       # 脱离终端启动
-tkx ls-running              # dev-server#1  pid 12345  running
-tkx watch dev-server        # 实时看日志；Ctrl+C 只退出查看
-tkx stop dev-server         # 杀掉整个进程树
-tkx clean --older-than=7d   # 清理已结束的实例和日志
+hire bstart dev-server       # 脱离终端启动
+hire ls-running              # dev-server#1  pid 12345  running
+hire watch dev-server        # 实时看日志；Ctrl+C 只退出查看
+hire stop dev-server         # 杀掉整个进程树
+hire clean --older-than=7d   # 清理已结束的实例和日志
 ```
 
 ### 常用命令
 
 ```powershell
-tkx config                  # 查看生效配置（display + shells）
-tkx ls-running              # 按 display.ls_running.time 窗口过滤（默认 1h）
-tkx --taskfile .\dev\My.lua hello   # 用任意 Taskfile 跑任务，不动全局
-tkx build --shell bash      # 本次运行指定 shell
+hire config                  # 查看生效配置（display + shells）
+hire ls-running              # 按 display.ls_running.time 窗口过滤（默认 1h）
+hire --taskfile .\dev\My.lua hello   # 用任意 Taskfile 跑任务，不动全局
+hire build --shell bash      # 本次运行指定 shell
 ```
 
 ## 架构
 
 ```mermaid
 flowchart TD
-    A["tkx &lt;task&gt;"] --> B[CLI 分发<br/>internal/cli]
+    A["hire &lt;task&gt;"] --> B[CLI 分发<br/>internal/cli]
     B --> C[config.lua<br/>shells + display]
     B --> D[Taskfile.lua<br/>全局或 --taskfile]
     C --> E[gopher-lua VM<br/>任务即函数]
     D --> E
     E --> F{模式？}
     F -->|前台| G["ctx:sh / ctx:exec<br/>继承 stdio"]
-    F -->|bstart| H[detached 子进程<br/>tkx _run name#N]
+    F -->|bstart| H[detached 子进程<br/>hire _run name#N]
     H --> I[("logs/name#N.log")]
     H --> J[("run.json")]
     I --> L[watch / stop / clean]
@@ -178,7 +178,7 @@ flowchart TD
 
 ## 配置
 
-配置目录为 `~/.config/taskx/`（Windows 同样遵循 `XDG_CONFIG_HOME`）。
+配置目录为 `~/.config/hire/`（Windows 同样遵循 `XDG_CONFIG_HOME`）。
 
 | 文件 | 用途 |
 |---|---|
@@ -203,7 +203,7 @@ return {
 }
 ```
 
-用 `tkx config` 查看当前生效值。完整选项说明见 [Taskfile 编写参考](docs/lua.md)。
+用 `hire config` 查看当前生效值。完整选项说明见 [Taskfile 编写参考](docs/lua.md)。
 
 ## ctx API（节选）
 

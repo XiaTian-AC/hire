@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"tkx/internal/argparse"
-	"tkx/internal/bg"
-	"tkx/internal/config"
+	"hire/internal/argparse"
+	"hire/internal/bg"
+	"hire/internal/config"
 )
 
 func setupEnv(t *testing.T, taskfileContent string) (Deps, *bytes.Buffer, *bytes.Buffer) {
@@ -20,7 +20,7 @@ func setupEnv(t *testing.T, taskfileContent string) (Deps, *bytes.Buffer, *bytes
 	t.Setenv("XDG_CONFIG_HOME", cfgDir)
 	t.Setenv("XDG_DATA_HOME", dataDir)
 	if taskfileContent != "" {
-		tfDir := filepath.Join(cfgDir, "taskx")
+		tfDir := filepath.Join(cfgDir, "hire")
 		os.MkdirAll(tfDir, 0o755)
 		os.WriteFile(filepath.Join(tfDir, "Taskfile.lua"), []byte(taskfileContent), 0o644)
 	}
@@ -372,7 +372,7 @@ func TestRunWithTaskfileOverride(t *testing.T) {
 func TestConfigCommand(t *testing.T) {
 	d, out, _ := setupEnv(t, "")
 	cfgDir := os.Getenv("XDG_CONFIG_HOME")
-	tfDir := filepath.Join(cfgDir, "taskx")
+	tfDir := filepath.Join(cfgDir, "hire")
 	os.MkdirAll(tfDir, 0o755)
 	os.WriteFile(filepath.Join(tfDir, "config.lua"), []byte(`return {
   shells = { gitbash = "C:/bin/bash.exe" },

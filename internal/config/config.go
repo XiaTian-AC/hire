@@ -11,24 +11,24 @@ import (
 
 func ConfigDir() (string, error) {
 	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
-		return filepath.Join(v, "taskx"), nil
+		return filepath.Join(v, "hire"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".config", "taskx"), nil
+	return filepath.Join(home, ".config", "hire"), nil
 }
 
 func DataDir() (string, error) {
 	if v := os.Getenv("XDG_DATA_HOME"); v != "" {
-		return filepath.Join(v, "taskx"), nil
+		return filepath.Join(v, "hire"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "share", "taskx"), nil
+	return filepath.Join(home, ".local", "share", "hire"), nil
 }
 
 func EnsureDataDir() (string, error) {
@@ -136,7 +136,7 @@ func Shells(dir string) (map[string]string, error) {
 	return shells, err
 }
 
-// FormatDuration renders a duration in tkx's compact form: "0", "30m",
+// FormatDuration renders a duration in hire's compact form: "0", "30m",
 // "1h", "2d", "1w". Falls back to Go's default for odd values.
 func FormatDuration(d time.Duration) string {
 	if d == 0 {
