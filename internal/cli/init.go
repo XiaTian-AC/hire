@@ -46,22 +46,34 @@ func cmdInit(argv []string, d Deps) int {
 		fmt.Fprintf(d.Stderr, "hire: unknown --lang %q (use: lua, python, node, cpp)\n", lang)
 		return 2
 	}
+	// Per-file: keep what exists, create what is missing - a scaffold
+	// must never overwrite, but a stale sibling must not block the
+	// missing one either.
+	created := 0
 	for _, f := range spec {
 		if fileExists(f.file) {
-			fmt.Fprintf(d.Stderr, "hire: %s already exists; hire init does not overwrite\n", f.file)
-			return 1
+			fmt.Fprintf(d.Stderr, "hire: %s already exists; keeping it\n", f.file)
+			continue
 		}
-	}
-	for _, f := range spec {
 		if err := os.WriteFile(f.file, []byte(f.tmpl), 0o644); err != nil {
 			fmt.Fprintf(d.Stderr, "hire: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(d.Stdout, "created %s\n", f.file)
+		created++
+	}
+	if created == 0 {
+		fmt.Fprintf(d.Stderr, "hire: nothing to create (all files exist)\n")
+		return 1
 	}
 	fmt.Fprintf(d.Stdout, "try: hire hello\n")
 	if lang != "lua" {
 		printRuntimeHint(lang, d)
+	}
+	// A .cpp taskfile in a Go module root breaks go build (the Go
+	// toolchain rejects stray C++ sources in a package directory).
+	if lang == "cpp" && fileExists("go.mod") {
+		fmt.Fprintf(d.Stderr, "hire: note: a .cpp taskfile in a Go module root breaks go build - keep taskfiles in a subdirectory\n")
 	}
 	return 0
 }

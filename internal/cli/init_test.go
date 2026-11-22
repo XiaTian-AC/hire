@@ -158,6 +158,52 @@ func TestInitRefusesOverwrite(t *testing.T) {
 	}
 }
 
+// A stale sibling does not block the missing file: hire.hpp present,
+// Taskfile.cpp absent - init creates only the missing one.
+func TestInitPartialExists(t *testing.T) {
+	t.Chdir(t.TempDir())
+	d, out, errOut := setupEnv(t, "")
+	const staleHeader = "// old header"
+	if err := os.WriteFile("hire.hpp", []byte(staleHeader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code := Run([]string{"init", "--lang", "cpp"}, d)
+	if code != 0 {
+		t.Fatalf("init --lang cpp with existing hire.hpp: code=%d err=%q", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "already exists; keeping it") {
+		t.Errorf("kept note missing: %q", errOut.String())
+	}
+	if !strings.Contains(out.String(), "created Taskfile.cpp") {
+		t.Errorf("created note missing: %q", out.String())
+	}
+	got, err := os.ReadFile("hire.hpp")
+	if err != nil || string(got) != staleHeader {
+		t.Errorf("existing hire.hpp must be untouched: %q (err=%v)", string(got), err)
+	}
+	if _, err := os.Stat("Taskfile.cpp"); err != nil {
+		t.Fatalf("Taskfile.cpp not created: %v", err)
+	}
+}
+
+// A .cpp taskfile in a Go module root gets the go-build poison warning.
+func TestInitCppInGoModuleWarns(t *testing.T) {
+	t.Chdir(t.TempDir())
+	d, _, errOut := setupEnv(t, "")
+	if err := os.WriteFile("go.mod", []byte("module demo\n\ngo 1.27\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code := Run([]string{"init", "--lang", "cpp"}, d)
+	if code != 0 {
+		t.Fatalf("init --lang cpp in go module: code=%d err=%q", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "go build") {
+		t.Errorf("go-mod warning missing: %q", errOut.String())
+	}
+}
+
 func TestInitUnknownLang(t *testing.T) {
 	t.Chdir(t.TempDir())
 	d, _, errOut := setupEnv(t, "")

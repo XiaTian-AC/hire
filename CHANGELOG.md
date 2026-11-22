@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.0.3
+
+- **`hire init` is per-file.** An existing sibling no longer blocks
+  generation: stale `hire.hpp` is kept with a notice while the missing
+  `Taskfile.cpp` is still created; only an all-files-exist run refuses.
+- **Go module guard.** `hire init --lang cpp` inside a Go module root
+  warns that a stray `.cpp` breaks `go build` (keep taskfiles in a
+  subdirectory).
+
 ## v2.0.2
 
 - **C++ arg sugar.** `task_def` gains `.req` / `.opt` / `.flag` chaining
