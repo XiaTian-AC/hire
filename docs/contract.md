@@ -212,7 +212,7 @@ process.stdout.write("hello, " + (args.name || "hire") + "\n");
 //
 //     void hire_main(hire::registry& reg) {
 //         reg.task("hello", "say hello")
-//            .arg("name", "string", false, "who to greet")
+//            .opt("name", "who to greet")
 //            .run([](const hire::args& a) {
 //                std::cout << "hello, " << a.get_string("name", "hire") << "\n";
 //            });
@@ -274,6 +274,11 @@ struct task_def {
         arg_specs.push_back(std::make_pair(std::move(name), arg_spec{std::move(type), std::move(desc), required}));
         return *this;
     }
+    // Sugar mirroring the Lua adapter: req = required string, opt =
+    // optional string, flag = optional bool; .arg stays for the rest.
+    task_def& req(std::string name, std::string desc = "") { return arg(std::move(name), "string", true, std::move(desc)); }
+    task_def& opt(std::string name, std::string desc = "") { return arg(std::move(name), "string", false, std::move(desc)); }
+    task_def& flag(std::string name, std::string desc = "") { return arg(std::move(name), "bool", false, std::move(desc)); }
     task_def& run(std::function<void(const args&)> fn) {
         body = std::move(fn);
         return *this;
@@ -476,17 +481,13 @@ int main(int argc, char** argv) {
 ```
 
 ```cpp
-// hire Taskfile.cpp - declare your tasks in hire_main; hire.hpp brings
-// everything else (dispatch, discover, HIRE_ARGS parsing, even main()).
-// hire compiles this file once with the build template from config.lua
-// (cpp = { build = "g++ -std=c++20 -O2 -o {out} {src}" }), caches the
-// binary by source hash. Full contract: docs/contract.md.
+// hire Taskfile.cpp - tasks go in hire_main; hire.hpp does the rest (docs/contract.md).
 
 #include "hire.hpp"
 
 void hire_main(hire::registry& reg) {
     reg.task("hello", "say hello (edit me)")
-        .arg("name", "string", false, "who to greet")
+        .opt("name", "who to greet")
         .run([](const hire::args& a) {
             std::cout << "hello, " << a.get_string("name", "hire") << "\n";
         });

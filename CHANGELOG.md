@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **C++ arg sugar.** `task_def` gains `.req` / `.opt` / `.flag` chaining
+  helpers mirroring the Lua adapter's `req`/`bool` sugar; the generated
+  `Taskfile.cpp` slimmed to a one-line header plus the task itself.
+
 ## v2.0.1
 
 - **Preset languages work out of the box.** python (probes `python3` →

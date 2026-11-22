@@ -143,18 +143,17 @@ process.stdout.write("hello, " + (args.name || "hire") + "\n");
 // and the C++ listings in docs/contract.md — they must stay identical.
 const CppHeaderTemplate = `// hire.hpp - the hire contract SDK for C++ taskfiles.
 //
-// Include it from Taskfile.cpp, register tasks, hand main() over:
+// Include it from Taskfile.cpp, define hire_main with your tasks; the
+// header provides main() itself:
 //
 //     #include "hire.hpp"
 //
-//     int main(int argc, char** argv) {
-//         hire::registry reg;
+//     void hire_main(hire::registry& reg) {
 //         reg.task("hello", "say hello")
-//            .arg("name", "string", false, "who to greet")
+//            .opt("name", "who to greet")
 //            .run([](const hire::args& a) {
 //                std::cout << "hello, " << a.get_string("name", "hire") << "\n";
 //            });
-//         return hire::main(reg, argc, argv);
 //     }
 //
 // hire calls your compiled program two ways:
@@ -213,6 +212,11 @@ struct task_def {
         arg_specs.push_back(std::make_pair(std::move(name), arg_spec{std::move(type), std::move(desc), required}));
         return *this;
     }
+    // Sugar mirroring the Lua adapter: req = required string, opt =
+    // optional string, flag = optional bool; .arg stays for the rest.
+    task_def& req(std::string name, std::string desc = "") { return arg(std::move(name), "string", true, std::move(desc)); }
+    task_def& opt(std::string name, std::string desc = "") { return arg(std::move(name), "string", false, std::move(desc)); }
+    task_def& flag(std::string name, std::string desc = "") { return arg(std::move(name), "bool", false, std::move(desc)); }
     task_def& run(std::function<void(const args&)> fn) {
         body = std::move(fn);
         return *this;
@@ -347,8 +351,8 @@ inline args args::parse(const std::string& json) {
     return out;
 }
 
-// main dispatches the __hire__ contract verbs for the registry.
-inline int main(registry& reg, int argc, char** argv) {
+// dispatch handles the __hire__ contract verbs for the registry.
+inline int dispatch(registry& reg, int argc, char** argv) {
     if (argc < 3 || std::string(argv[1]) != "__hire__") {
         std::cerr << "usage: __hire__ discover | run <name>\n";
         return 1;
@@ -400,28 +404,31 @@ inline int main(registry& reg, int argc, char** argv) {
 }
 
 }  // namespace hire
-`
 
-// CppTemplate is the user-facing Taskfile.cpp that pairs with
-// CppHeaderTemplate: only the task itself, the contract lives in hire.hpp.
-const CppTemplate = `// hire Taskfile.cpp - with hire.hpp, the contract is one call away.
-// hire compiles this file once with the build template from config.lua
-// (cpp = { build = "g++ -std=c++20 -O2 -o {out} {src}" }), caches the
-// binary by source hash, then drives it with __hire__ discover / run.
-// Full contract: docs/contract.md.
-
-#include "hire.hpp"
+// hire_main is yours to define: declare tasks into reg. The main()
+// below dispatches the __hire__ contract verbs around it - you never
+// write main yourself.
+void hire_main(hire::registry& reg);
 
 int main(int argc, char** argv) {
     hire::registry reg;
+    hire_main(reg);
+    return hire::dispatch(reg, argc, argv);
+}
+`
 
-    // Your tasks: name, desc, typed args, then the body.
+// CppTemplate is the user-facing Taskfile.cpp that pairs with
+// CppHeaderTemplate: only the tasks, declared in hire_main - the
+// contract, the parsing, even main() live in hire.hpp.
+const CppTemplate = `// hire Taskfile.cpp - tasks go in hire_main; hire.hpp does the rest (docs/contract.md).
+
+#include "hire.hpp"
+
+void hire_main(hire::registry& reg) {
     reg.task("hello", "say hello (edit me)")
-        .arg("name", "string", false, "who to greet")
+        .opt("name", "who to greet")
         .run([](const hire::args& a) {
             std::cout << "hello, " << a.get_string("name", "hire") << "\n";
         });
-
-    return hire::main(reg, argc, argv);
 }
 `
