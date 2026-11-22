@@ -27,8 +27,9 @@ Node、编译的 C++、甚至一个 shell 脚本。
 ## discover 必须纯
 
 **`__hire__ discover` 会执行你的代码，但契约要求它纯**：不写文件、不发包、不打印
-除结果 JSON 外的任何东西、不做不可逆动作。hire 每次调用都现查（discover 无缓存），
-`ls`、`--help`、后台启动都会触发——一次 discover 里的一次 `git push` 会在你敲
+除结果 JSON 外的任何东西、不做不可逆动作。hire 每次调用都现查（discover 无缓存；
+唯一例外是 C++ 函数形式——解析+discover 结果缓存为 `<cachedir>/hire/cpp/<hash>.tasks.json`，
+见下文 C++ 节），`ls`、`--help`、后台启动都会触发——一次 discover 里的一次 `git push` 会在你敲
 `hire ls` 时真的推上去。描述任务，仅此而已。真正的副作用全部放在 `run` 里。
 这与你信任 taskfile 本身是同一级的信任模型：跑任务 = 执行用户代码；但 discover
 被调用得远比 run 频繁，不纯的 discover 会被日常列表操作意外引爆。
@@ -66,14 +67,16 @@ return {
     python = "python3",                                       -- 字符串 = 解释型命令
     node   = "node",
     ts     = { cmd = "tsx", ext = ".mts" },                    -- 表 = 自定义扩展名声明
-    cpp    = { build = "g++ -std=c++20 -O2 -o {out} {src}" }, -- 表 = 编译型
+    cpp    = { build = "g++ -std=c++20 -O2 -o {out} {src}", parser = "clang++" }, -- 表 = 编译型
   },
 }
 ```
 
 表形态两种用法：`{ cmd = "..." , ext = "..." }` 声明一个拥有自定义扩展名的解释型
 运行时（`ext` 可为字符串或数组，如 TypeScript 映到 node 24+ 的原生类型擦除）；
-`{ build = "..." }` 声明编译型。同名扩展多运行时声明时按字母序第一个生效。
+`{ build = "...", parser = "clang++" }` 声明编译型——`parser` 可选，是 C++ 函数形式
+taskfile 的 AST 解析器（缺省探测 clang++ → clang；不写 config.lua 则 g++/clang 探测
+PATH 即可）。同名扩展多运行时声明时按字母序第一个生效。
 
 - 扩展名内建映射：`.py`→python、`.js`/`.mjs`→node、`.cpp`/`.cc`→cpp；
   `.lua`/`.toml` 走内嵌适配器，不需要 runtimes
@@ -326,15 +329,75 @@ if (name !== "hello") {
 process.stdout.write("hello, " + (args.name || "hire") + "\n");
 ```
 
-### C++（Taskfile.cpp + hire.hpp，编译型）
+### C++（Taskfile.cpp，函数形式 + 用户自配 clang++）
 
-`hire init --lang cpp` 生成两个文件：`hire.hpp`（契约 SDK——`__hire__` 分发、discover JSON 输出、带转义处理的 `HIRE_ARGS` 解析全部收在头文件里）和只含任务本体的 `Taskfile.cpp`。手写单文件契约程序同样合法——头文件只是便利品，不引入任何私有机制。
+`hire init --lang cpp` 生成 `Taskfile.cpp`——纯 C++ 函数：每个顶层非 static
+自由函数就是一个任务；紧邻函数上方的 `//` 注释首行（约定 `// desc: ...`）是任务描述
+（注释归属按 clang `-fparse-all-comments` 的实际行为：注释与函数之间空一行仍会挂到该函数上，
+所以"紧邻"并非必须零行距）；`static` 或匿名命名空间里的函数是助手。
+同一函数的转发声明与定义会被 clang 以 `previousDecl` 关联，只算一个任务；`extern` 声明
+（本翻译单元无函数体）不会被选为任务。参数映射：`std::string`/`string`→string、
+`bool`→flag、`int`/`long`/`long long`/`double`/`float`→num；**有默认值 = 可选**
+（默认值写进参数 desc 提示位，如 `default: 8080`），无默认 = 必填；不支持的参数类型
+加载期报错（点名函数+参数）。
+
+加载机制（clang 与 g++ 同为用户自配，绝不内置）：
+
+1. hire 调用 PATH 上的 `clang++ -Xclang -ast-dump=json -fsyntax-only
+   -fparse-all-comments Taskfile.cpp`，纯 Go 解析其 JSON AST——无 Cgo、无外部依赖。
+   语法错误透传 clang 自己的诊断（按你的真实 文件:行 报告）。
+2. 缓存目录（不污染用户目录）生成包装 TU：`#include "hire.hpp"`（hire 内嵌的同一份
+   SDK 头）+ `#include "<Taskfile.cpp 绝对路径>"` + 逐函数注册代码（HIRE_ARGS JSON →
+   类型化转换后**直接以实参调用**你的函数）+ main() 由 hire.hpp 提供。include 语义保证
+   编译器诊断按你的真实行号报告。
+3. 编译仍走你的 build 模板（对象 = 包装 TU，`{src}` 传包装 TU 路径）；函数形式的缓存键 =
+   sha256(源文件内容 + NUL + build 命令 + NUL + 内嵌 SDK 头字节 + NUL + 代码生成版本号)，
+   解析+discover 结果缓存为 `<cachedir>/hire/cpp/<hash>.tasks.json`——命中时零解析、零执行、
+   零重编（遗留契约形态仍用 sha256(源文件内容 + NUL + build 命令)，不含代码生成盐）。
+4. config.lua 可覆盖解析器：`cpp = { build = "...", parser = "clang++" }`
+   （缺省探测 clang++ → clang）。无 clang 时函数形式 discover 报错指引：装
+   clang++，或改用下面的 hpp 链式形态。
 
 ```cpp
-// hire.hpp - the hire contract SDK for C++ taskfiles.
+// hire Taskfile.cpp - a taskfile is plain C++ functions: every top-level
+// non-static function is a task. The // comment line right above one is
+// its description (a "desc:" prefix is the convention); a default value
+// makes the argument optional, and std::string/bool/int/double params
+// become string/flag/num arguments.
+//
+// hire parses this file with your clang++ (probed on PATH; override with
+// parser = "clang++" in config.lua) and compiles a small generated
+// wrapper in its cache - this file stays plain C++. static functions and
+// anonymous namespaces hold helpers, not tasks. Full contract:
+// docs/contract.md.
+
+#include <iostream>
+#include <string>
+
+// desc: say hello (edit me)
+void hello(std::string name = "hire") {
+    std::cout << "hello, " << name << "\n";
+}
+
+// desc: compile the app (opt = optimization level, scale = job multiplier)
+void build(std::string target = "app", int opt = 2, double scale = 1.5) {
+    std::cout << "g++ -O" << opt << " -j" << opt * scale
+              << " -o " << target << " main.cpp\n";
+}
+```
+
+**hpp 链式形态（合法遗留）**：v2.0.x 的写法继续有效——include hire.hpp、在
+hire_main 里注册。文件含 `hire.hpp` 或 `__hire__` 字样时走该 raw 契约路径
+（discover 每次现查，不走函数形式缓存）；`hire init` 不再生成它，全文如下
+（手写契约程序同样合法——头文件只是便利品，不引入任何私有机制）：
+
+```cpp
+// hire.hpp - the hire contract SDK for C++ taskfiles (legacy form).
 //
 // Include it from Taskfile.cpp, define hire_main with your tasks; the
-// header provides main() itself:
+// header provides main() itself. The function form (plain top-level
+// functions, parsed by your clang++) is the primary shape now — this
+// header form stays fully legal:
 //
 //     #include "hire.hpp"
 //
@@ -612,6 +675,8 @@ int main(int argc, char** argv) {
     return hire::dispatch(reg, argc, argv);
 }
 ```
+
+配套的 hpp 形态 Taskfile.cpp（init 不再生成；照此手写同样合法）：
 
 ```cpp
 // hire Taskfile.cpp - tasks go in hire_main; hire.hpp does the rest (docs/contract.md).

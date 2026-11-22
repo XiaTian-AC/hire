@@ -217,12 +217,18 @@ process.stdout.write("hello, " + (args.name || "hire") + "\n");
 
 // CppHeaderTemplate is hire.hpp, the __hire__ contract SDK for C++
 // taskfiles: registry/dispatch, discover JSON emission, and a real
-// HIRE_ARGS parser (escapes handled). Edit together with CppTemplate
-// and the C++ listings in docs/contract.md — they must stay identical.
-const CppHeaderTemplate = `// hire.hpp - the hire contract SDK for C++ taskfiles.
+// HIRE_ARGS parser (escapes handled). LEGACY form: function-form
+// taskfiles (CppTemplate) are the primary and need no hire.hpp in the
+// user directory — hire writes this header beside its generated wrapper
+// itself. The hand-written contract form stays legal (spec §4.6); edit
+// together with the C++ listings in docs/contract.md — they must stay
+// identical.
+const CppHeaderTemplate = `// hire.hpp - the hire contract SDK for C++ taskfiles (legacy form).
 //
 // Include it from Taskfile.cpp, define hire_main with your tasks; the
-// header provides main() itself:
+// header provides main() itself. The function form (plain top-level
+// functions, parsed by your clang++) is the primary shape now — this
+// header form stays fully legal:
 //
 //     #include "hire.hpp"
 //
@@ -501,18 +507,36 @@ int main(int argc, char** argv) {
 }
 `
 
-// CppTemplate is the user-facing Taskfile.cpp that pairs with
-// CppHeaderTemplate: only the tasks, declared in hire_main - the
-// contract, the parsing, even main() live in hire.hpp.
-const CppTemplate = `// hire Taskfile.cpp - tasks go in hire_main; hire.hpp does the rest (docs/contract.md).
+// CppTemplate is the function-form Taskfile.cpp: plain C++ functions,
+// no registration, no main, no hire includes — hire parses it with the
+// user's clang and builds a generated wrapper. The comment line right
+// above a function is its desc ("desc:" prefix stripped); default
+// values make args optional. docs/contract.md reprints this verbatim —
+// edit both together. (The hire.hpp contract form stays legal legacy,
+// documented there; hire init no longer scaffolds it.)
+const CppTemplate = `// hire Taskfile.cpp - a taskfile is plain C++ functions: every top-level
+// non-static function is a task. The // comment line right above one is
+// its description (a "desc:" prefix is the convention); a default value
+// makes the argument optional, and std::string/bool/int/double params
+// become string/flag/num arguments.
+//
+// hire parses this file with your clang++ (probed on PATH; override with
+// parser = "clang++" in config.lua) and compiles a small generated
+// wrapper in its cache - this file stays plain C++. static functions and
+// anonymous namespaces hold helpers, not tasks. Full contract:
+// docs/contract.md.
 
-#include "hire.hpp"
+#include <iostream>
+#include <string>
 
-void hire_main(hire::registry& reg) {
-    reg.task("hello", "say hello (edit me)")
-        .opt("name", "who to greet")
-        .run([](const hire::args& a) {
-            std::cout << "hello, " << a.get_string("name", "hire") << "\n";
-        });
+// desc: say hello (edit me)
+void hello(std::string name = "hire") {
+    std::cout << "hello, " << name << "\n";
+}
+
+// desc: compile the app (opt = optimization level, scale = job multiplier)
+void build(std::string target = "app", int opt = 2, double scale = 1.5) {
+    std::cout << "g++ -O" << opt << " -j" << opt * scale
+              << " -o " << target << " main.cpp\n";
 }
 `

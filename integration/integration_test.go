@@ -393,6 +393,11 @@ func TestIntegrationTriLingual(t *testing.T) {
 	} {
 		t.Run(lang, func(t *testing.T) {
 			cmdOnPath := langCmd(t, candidates...)
+			if lang == "cpp" {
+				// The scaffolded function-form Taskfile.cpp is parsed
+				// with the user's clang before g++ builds the wrapper.
+				langCmd(t, "clang++", "clang")
+			}
 			work := t.TempDir()
 			cfg := map[string]string{
 				"python": "return { runtimes = { python = " + luaString(cmdOnPath) + " } }",
@@ -538,7 +543,8 @@ conly = function() x.echo("only-cwd") end
 // TestIntegrationCcExplicitTaskfile pins T6+7 review M6's last leg:
 // .cc dispatches through the cpp runtime when (and only when) named
 // explicitly via --taskfile; the auto-discovery list stays the fixed
-// five and never picks a .cc up.
+// five and never picks a .cc up. The taskfile is the function form
+// (CppTemplate), so this leg also proves .cc parses through clang.
 func TestIntegrationCcExplicitTaskfile(t *testing.T) {
 	bin := buildBinary(t)
 	cfgDir, _ := os.MkdirTemp("", "hire-cfg-")
@@ -547,12 +553,11 @@ func TestIntegrationCcExplicitTaskfile(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", dataDir)
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	langCmd(t, "g++")
+	langCmd(t, "clang++", "clang")
 	writeTaskfile(filepath.Join(cfgDir, "hire"), "config.lua",
 		"return { runtimes = { cpp = { build = \"g++ -std=c++20 -O2 -o {out} {src}\" } } }")
 
 	work := t.TempDir()
-	// CppTemplate includes hire.hpp, so the SDK header must sit beside it.
-	writeTaskfile(work, "hire.hpp", adapter.CppHeaderTemplate)
 	writeTaskfile(work, "Taskfile.cc", adapter.CppTemplate)
 
 	// Auto-discovery probes only the fixed five: a lone .cc is invisible.
@@ -564,6 +569,57 @@ func TestIntegrationCcExplicitTaskfile(t *testing.T) {
 	out, code = runBinOpt(t, bin, work, nil, "--taskfile", "Taskfile.cc", "hello", "--name", "ccruns")
 	if code != 0 || !strings.Contains(out, "hello, ccruns") {
 		t.Fatalf("--taskfile Taskfile.cc hello: code=%d out=%q", code, out)
+	}
+}
+
+// TestIntegrationCppFuncForm: the function-form pipeline through the
+// real CLI - clang parses the scaffold, g++ builds the generated
+// wrapper, and both num params round-trip with their default hints in
+// help and their values in the run.
+func TestIntegrationCppFuncForm(t *testing.T) {
+	bin := buildBinary(t)
+	cfgDir, _ := os.MkdirTemp("", "hire-cfg-")
+	dataDir, _ := os.MkdirTemp("", "hire-data-")
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	t.Setenv("XDG_DATA_HOME", dataDir)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir()) // compile cache stays test-local
+	langCmd(t, "g++")
+	langCmd(t, "clang++", "clang")
+	writeTaskfile(filepath.Join(cfgDir, "hire"), "config.lua",
+		"return { runtimes = { cpp = { build = \"g++ -std=c++20 -O2 -o {out} {src}\" } } }")
+
+	work := t.TempDir()
+	writeTaskfile(work, "Taskfile.cpp", adapter.CppTemplate)
+
+	// discover: the parse + wrapper + build + discover chain.
+	out, code := runBinOpt(t, bin, work, nil, "ls")
+	if code != 0 || !strings.Contains(out, "hello") || !strings.Contains(out, "build") {
+		t.Fatalf("ls (function-form discover): code=%d out=%q", code, out)
+	}
+
+	// help shows the num type labels and the default hints.
+	out, code = runBinOpt(t, bin, work, nil, "help", "build")
+	if code != 0 || !strings.Contains(out, "--opt num") || !strings.Contains(out, "default: 2") ||
+		!strings.Contains(out, "--scale num") || !strings.Contains(out, "default: 1.5") {
+		t.Fatalf("help build: code=%d out=%q (want num labels + default hints)", code, out)
+	}
+
+	// run with defaults: the wrapper's fallbacks equal the source defaults.
+	out, code = runBinOpt(t, bin, work, nil, "build")
+	if code != 0 || !strings.Contains(out, "g++ -O2 -j3 -o app main.cpp") {
+		t.Fatalf("build (defaults): code=%d out=%q", code, out)
+	}
+
+	// run with explicit num args: int and double both cross as JSON numbers.
+	out, code = runBinOpt(t, bin, work, nil, "build", "--opt", "4", "--scale", "2")
+	if code != 0 || !strings.Contains(out, "g++ -O4 -j8 -o app main.cpp") {
+		t.Fatalf("build --opt 4 --scale 2: code=%d out=%q", code, out)
+	}
+
+	// the string arg round-trips too.
+	out, code = runBinOpt(t, bin, work, nil, "hello", "--name", "e2e")
+	if code != 0 || !strings.Contains(out, "hello, e2e") {
+		t.Fatalf("hello --name e2e: code=%d out=%q", code, out)
 	}
 }
 

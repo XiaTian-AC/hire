@@ -1,0 +1,2028 @@
+{
+  "id": "0x2266d1ed218",
+  "kind": "TranslationUnitDecl",
+  "loc": {},
+  "range": {
+    "begin": {},
+    "end": {}
+  },
+  "inner": [
+    {
+      "id": "0x2266d1eda88",
+      "kind": "TypedefDecl",
+      "loc": {},
+      "range": {
+        "begin": {},
+        "end": {}
+      },
+      "isImplicit": true,
+      "name": "__int128_t",
+      "type": {
+        "qualType": "__int128"
+      },
+      "inner": [
+        {
+          "id": "0x2266d1ed7e0",
+          "kind": "BuiltinType",
+          "type": {
+            "qualType": "__int128"
+          }
+        }
+      ]
+    },
+    {
+      "id": "0x2266d1edaf8",
+      "kind": "TypedefDecl",
+      "loc": {},
+      "range": {
+        "begin": {},
+        "end": {}
+      },
+      "isImplicit": true,
+      "name": "__uint128_t",
+      "type": {
+        "qualType": "unsigned __int128"
+      },
+      "inner": [
+        {
+          "id": "0x2266d1ed800",
+          "kind": "BuiltinType",
+          "type": {
+            "qualType": "unsigned __int128"
+          }
+        }
+      ]
+    },
+    {
+      "id": "0x2266d1ede70",
+      "kind": "TypedefDecl",
+      "loc": {},
+      "range": {
+        "begin": {},
+        "end": {}
+      },
+      "isImplicit": true,
+      "name": "__NSConstantString",
+      "type": {
+        "qualType": "__NSConstantString_tag"
+      },
+      "inner": [
+        {
+          "id": "0x2266d1edbe0",
+          "kind": "RecordType",
+          "type": {
+            "qualType": "__NSConstantString_tag"
+          },
+          "decl": {
+            "id": "0x2266d1edb50",
+            "kind": "CXXRecordDecl",
+            "name": "__NSConstantString_tag"
+          }
+        }
+      ]
+    },
+    {
+      "id": "0x2266d1edf18",
+      "kind": "TypedefDecl",
+      "loc": {},
+      "range": {
+        "begin": {},
+        "end": {}
+      },
+      "isImplicit": true,
+      "name": "__builtin_ms_va_list",
+      "type": {
+        "qualType": "char *"
+      },
+      "inner": [
+        {
+          "id": "0x2266d1eded0",
+          "kind": "PointerType",
+          "type": {
+            "qualType": "char *"
+          },
+          "inner": [
+            {
+              "id": "0x2266d1ed2c0",
+              "kind": "BuiltinType",
+              "type": {
+                "qualType": "char"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "0x2266d1edf88",
+      "kind": "TypedefDecl",
+      "loc": {},
+      "range": {
+        "begin": {},
+        "end": {}
+      },
+      "isImplicit": true,
+      "name": "__builtin_va_list",
+      "type": {
+        "qualType": "char *"
+      },
+      "inner": [
+        {
+          "id": "0x2266d1eded0",
+          "kind": "PointerType",
+          "type": {
+            "qualType": "char *"
+          },
+          "inner": [
+            {
+              "id": "0x2266d1ed2c0",
+              "kind": "BuiltinType",
+              "type": {
+                "qualType": "char"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "0x2266d1ee038",
+      "kind": "NamespaceDecl",
+      "loc": {
+        "offset": 280,
+        "file": "./cppfunc-stub.h",
+        "line": 6,
+        "col": 11,
+        "tokLen": 3,
+        "includedFrom": {
+          "file": "cppfunc-sample.cpp"
+        }
+      },
+      "range": {
+        "begin": {
+          "offset": 270,
+          "col": 1,
+          "tokLen": 9,
+          "includedFrom": {
+            "file": "cppfunc-sample.cpp"
+          }
+        },
+        "end": {
+          "offset": 344,
+          "line": 11,
+          "col": 1,
+          "tokLen": 1,
+          "includedFrom": {
+            "file": "cppfunc-sample.cpp"
+          }
+        }
+      },
+      "name": "std",
+      "inner": [
+        {
+          "id": "0x2266d1ee0a8",
+          "kind": "CXXRecordDecl",
+          "loc": {
+            "offset": 293,
+            "line": 7,
+            "col": 8,
+            "tokLen": 6,
+            "includedFrom": {
+              "file": "cppfunc-sample.cpp"
+            }
+          },
+          "range": {
+            "begin": {
+              "offset": 286,
+              "col": 1,
+              "tokLen": 6,
+              "includedFrom": {
+                "file": "cppfunc-sample.cpp"
+              }
+            },
+            "end": {
+              "offset": 341,
+              "line": 10,
+              "col": 1,
+              "tokLen": 1,
+              "includedFrom": {
+                "file": "cppfunc-sample.cpp"
+              }
+            }
+          },
+          "isReferenced": true,
+          "name": "string",
+          "tagUsed": "struct",
+          "completeDefinition": true,
+          "definitionData": {
+            "canConstDefaultInit": true,
+            "canPassInRegisters": true,
+            "copyAssign": {
+              "hasConstParam": true,
+              "implicitHasConstParam": true,
+              "needsImplicit": true,
+              "simple": true,
+              "trivial": true
+            },
+            "copyCtor": {
+              "hasConstParam": true,
+              "implicitHasConstParam": true,
+              "simple": true,
+              "trivial": true
+            },
+            "defaultCtor": {
+              "defaultedIsConstexpr": true,
+              "exists": true,
+              "nonTrivial": true,
+              "userProvided": true
+            },
+            "dtor": {
+              "irrelevant": true,
+              "simple": true,
+              "trivial": true
+            },
+            "hasUserDeclaredConstructor": true,
+            "isEmpty": true,
+            "isStandardLayout": true,
+            "isTriviallyCopyable": true,
+            "moveAssign": {
+              "exists": true,
+              "needsImplicit": true,
+              "simple": true,
+              "trivial": true
+            },
+            "moveCtor": {
+              "exists": true,
+              "simple": true,
+              "trivial": true
+            }
+          },
+          "inner": [
+            {
+              "id": "0x2266d68ed00",
+              "kind": "CXXRecordDecl",
+              "loc": {
+                "offset": 293,
+                "line": 7,
+                "col": 8,
+                "tokLen": 6,
+                "includedFrom": {
+                  "file": "cppfunc-sample.cpp"
+                }
+              },
+              "range": {
+                "begin": {
+                  "offset": 286,
+                  "col": 1,
+                  "tokLen": 6,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                },
+                "end": {
+                  "offset": 293,
+                  "col": 8,
+                  "tokLen": 6,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                }
+              },
+              "isImplicit": true,
+              "isReferenced": true,
+              "name": "string",
+              "tagUsed": "struct"
+            },
+            {
+              "id": "0x2266d68ee30",
+              "kind": "CXXConstructorDecl",
+              "loc": {
+                "offset": 306,
+                "line": 8,
+                "col": 5,
+                "tokLen": 6,
+                "includedFrom": {
+                  "file": "cppfunc-sample.cpp"
+                }
+              },
+              "range": {
+                "begin": {
+                  "offset": 306,
+                  "col": 5,
+                  "tokLen": 6,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                },
+                "end": {
+                  "offset": 313,
+                  "col": 12,
+                  "tokLen": 1,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                }
+              },
+              "name": "string",
+              "mangledName": "_ZNSt6stringC1Ev",
+              "type": {
+                "qualType": "void ()"
+              }
+            },
+            {
+              "id": "0x2266d68efc0",
+              "kind": "CXXConstructorDecl",
+              "loc": {
+                "offset": 320,
+                "line": 9,
+                "col": 5,
+                "tokLen": 6,
+                "includedFrom": {
+                  "file": "cppfunc-sample.cpp"
+                }
+              },
+              "range": {
+                "begin": {
+                  "offset": 320,
+                  "col": 5,
+                  "tokLen": 6,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                },
+                "end": {
+                  "offset": 338,
+                  "col": 23,
+                  "tokLen": 1,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                }
+              },
+              "isReferenced": true,
+              "name": "string",
+              "mangledName": "_ZNSt6stringC1EPKc",
+              "type": {
+                "qualType": "void (const char *)"
+              },
+              "inner": [
+                {
+                  "id": "0x2266d68eef8",
+                  "kind": "ParmVarDecl",
+                  "loc": {
+                    "offset": 338,
+                    "col": 23,
+                    "tokLen": 1,
+                    "includedFrom": {
+                      "file": "cppfunc-sample.cpp"
+                    }
+                  },
+                  "range": {
+                    "begin": {
+                      "offset": 327,
+                      "col": 12,
+                      "tokLen": 5,
+                      "includedFrom": {
+                        "file": "cppfunc-sample.cpp"
+                      }
+                    },
+                    "end": {
+                      "offset": 337,
+                      "col": 22,
+                      "tokLen": 1,
+                      "includedFrom": {
+                        "file": "cppfunc-sample.cpp"
+                      }
+                    }
+                  },
+                  "type": {
+                    "qualType": "const char *"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "0x2266d68f2e0",
+              "kind": "CXXConstructorDecl",
+              "loc": {
+                "offset": 293,
+                "line": 7,
+                "col": 8,
+                "tokLen": 6,
+                "includedFrom": {
+                  "file": "cppfunc-sample.cpp"
+                }
+              },
+              "range": {
+                "begin": {
+                  "offset": 293,
+                  "col": 8,
+                  "tokLen": 6,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                },
+                "end": {
+                  "offset": 293,
+                  "col": 8,
+                  "tokLen": 6,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                }
+              },
+              "isImplicit": true,
+              "name": "string",
+              "mangledName": "_ZNSt6stringC1ERKS_",
+              "type": {
+                "qualType": "void (const string &)"
+              },
+              "inline": true,
+              "constexpr": true,
+              "explicitlyDefaulted": "default",
+              "inner": [
+                {
+                  "id": "0x2266d68f410",
+                  "kind": "ParmVarDecl",
+                  "loc": {
+                    "offset": 293,
+                    "col": 8,
+                    "tokLen": 6,
+                    "includedFrom": {
+                      "file": "cppfunc-sample.cpp"
+                    }
+                  },
+                  "range": {
+                    "begin": {
+                      "offset": 293,
+                      "col": 8,
+                      "tokLen": 6,
+                      "includedFrom": {
+                        "file": "cppfunc-sample.cpp"
+                      }
+                    },
+                    "end": {
+                      "offset": 293,
+                      "col": 8,
+                      "tokLen": 6,
+                      "includedFrom": {
+                        "file": "cppfunc-sample.cpp"
+                      }
+                    }
+                  },
+                  "type": {
+                    "qualType": "const string &"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "0x2266d68f4f0",
+              "kind": "CXXConstructorDecl",
+              "loc": {
+                "offset": 293,
+                "col": 8,
+                "tokLen": 6,
+                "includedFrom": {
+                  "file": "cppfunc-sample.cpp"
+                }
+              },
+              "range": {
+                "begin": {
+                  "offset": 293,
+                  "col": 8,
+                  "tokLen": 6,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                },
+                "end": {
+                  "offset": 293,
+                  "col": 8,
+                  "tokLen": 6,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                }
+              },
+              "isImplicit": true,
+              "name": "string",
+              "mangledName": "_ZNSt6stringC1EOS_",
+              "type": {
+                "qualType": "void (string &&)"
+              },
+              "inline": true,
+              "constexpr": true,
+              "explicitlyDefaulted": "default",
+              "inner": [
+                {
+                  "id": "0x2266d68f620",
+                  "kind": "ParmVarDecl",
+                  "loc": {
+                    "offset": 293,
+                    "col": 8,
+                    "tokLen": 6,
+                    "includedFrom": {
+                      "file": "cppfunc-sample.cpp"
+                    }
+                  },
+                  "range": {
+                    "begin": {
+                      "offset": 293,
+                      "col": 8,
+                      "tokLen": 6,
+                      "includedFrom": {
+                        "file": "cppfunc-sample.cpp"
+                      }
+                    },
+                    "end": {
+                      "offset": 293,
+                      "col": 8,
+                      "tokLen": 6,
+                      "includedFrom": {
+                        "file": "cppfunc-sample.cpp"
+                      }
+                    }
+                  },
+                  "type": {
+                    "qualType": "string &&"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "0x2266d68f828",
+              "kind": "CXXDestructorDecl",
+              "loc": {
+                "offset": 293,
+                "col": 8,
+                "tokLen": 6,
+                "includedFrom": {
+                  "file": "cppfunc-sample.cpp"
+                }
+              },
+              "range": {
+                "begin": {
+                  "offset": 293,
+                  "col": 8,
+                  "tokLen": 6,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                },
+                "end": {
+                  "offset": 293,
+                  "col": 8,
+                  "tokLen": 6,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                }
+              },
+              "isImplicit": true,
+              "isReferenced": true,
+              "name": "~string",
+              "mangledName": "_ZNSt6stringD1Ev",
+              "type": {
+                "qualType": "void () noexcept"
+              },
+              "inline": true,
+              "explicitlyDefaulted": "default"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "0x2266d68f9f0",
+      "kind": "FunctionDecl",
+      "loc": {
+        "offset": 351,
+        "line": 12,
+        "col": 6,
+        "tokLen": 18,
+        "includedFrom": {
+          "file": "cppfunc-sample.cpp"
+        }
+      },
+      "range": {
+        "begin": {
+          "offset": 346,
+          "col": 1,
+          "tokLen": 4,
+          "includedFrom": {
+            "file": "cppfunc-sample.cpp"
+          }
+        },
+        "end": {
+          "offset": 402,
+          "col": 57,
+          "tokLen": 1,
+          "includedFrom": {
+            "file": "cppfunc-sample.cpp"
+          }
+        }
+      },
+      "name": "declared_in_header",
+      "mangledName": "_Z18declared_in_headerSt6string",
+      "type": {
+        "qualType": "void (std::string)"
+      },
+      "inner": [
+        {
+          "id": "0x2266d68f138",
+          "kind": "ParmVarDecl",
+          "loc": {
+            "offset": 382,
+            "col": 37,
+            "tokLen": 1,
+            "includedFrom": {
+              "file": "cppfunc-sample.cpp"
+            }
+          },
+          "range": {
+            "begin": {
+              "offset": 370,
+              "col": 25,
+              "tokLen": 3,
+              "includedFrom": {
+                "file": "cppfunc-sample.cpp"
+              }
+            },
+            "end": {
+              "offset": 386,
+              "col": 41,
+              "tokLen": 13,
+              "includedFrom": {
+                "file": "cppfunc-sample.cpp"
+              }
+            }
+          },
+          "name": "s",
+          "type": {
+            "qualType": "std::string"
+          },
+          "init": "c",
+          "inner": [
+            {
+              "id": "0x2266d68f810",
+              "kind": "ImplicitCastExpr",
+              "range": {
+                "begin": {
+                  "offset": 386,
+                  "col": 41,
+                  "tokLen": 13,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                },
+                "end": {
+                  "offset": 386,
+                  "col": 41,
+                  "tokLen": 13,
+                  "includedFrom": {
+                    "file": "cppfunc-sample.cpp"
+                  }
+                }
+              },
+              "type": {
+                "qualType": "std::string"
+              },
+              "valueCategory": "prvalue",
+              "castKind": "ConstructorConversion",
+              "conversionFunc": {
+                "id": "0x2266d68efc0",
+                "kind": "CXXConstructorDecl",
+                "name": "string",
+                "type": {
+                  "qualType": "void (const char *)"
+                }
+              },
+              "inner": [
+                {
+                  "id": "0x2266d68f7e0",
+                  "kind": "CXXConstructExpr",
+                  "range": {
+                    "begin": {
+                      "offset": 386,
+                      "col": 41,
+                      "tokLen": 13,
+                      "includedFrom": {
+                        "file": "cppfunc-sample.cpp"
+                      }
+                    },
+                    "end": {
+                      "offset": 386,
+                      "col": 41,
+                      "tokLen": 13,
+                      "includedFrom": {
+                        "file": "cppfunc-sample.cpp"
+                      }
+                    }
+                  },
+                  "type": {
+                    "qualType": "std::string"
+                  },
+                  "valueCategory": "prvalue",
+                  "ctorType": {
+                    "qualType": "void (const char *)"
+                  },
+                  "hadMultipleCandidates": true,
+                  "constructionKind": "complete",
+                  "inner": [
+                    {
+                      "id": "0x2266d68f6a0",
+                      "kind": "ImplicitCastExpr",
+                      "range": {
+                        "begin": {
+                          "offset": 386,
+                          "col": 41,
+                          "tokLen": 13,
+                          "includedFrom": {
+                            "file": "cppfunc-sample.cpp"
+                          }
+                        },
+                        "end": {
+                          "offset": 386,
+                          "col": 41,
+                          "tokLen": 13,
+                          "includedFrom": {
+                            "file": "cppfunc-sample.cpp"
+                          }
+                        }
+                      },
+                      "type": {
+                        "qualType": "const char *"
+                      },
+                      "valueCategory": "prvalue",
+                      "castKind": "ArrayToPointerDecay",
+                      "inner": [
+                        {
+                          "id": "0x2266d68f220",
+                          "kind": "StringLiteral",
+                          "range": {
+                            "begin": {
+                              "offset": 386,
+                              "col": 41,
+                              "tokLen": 13,
+                              "includedFrom": {
+                                "file": "cppfunc-sample.cpp"
+                              }
+                            },
+                            "end": {
+                              "offset": 386,
+                              "col": 41,
+                              "tokLen": 13,
+                              "includedFrom": {
+                                "file": "cppfunc-sample.cpp"
+                              }
+                            }
+                          },
+                          "type": {
+                            "qualType": "const char[12]"
+                          },
+                          "valueCategory": "lvalue",
+                          "value": "\"from header\""
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "0x2266d68fb18",
+          "kind": "CompoundStmt",
+          "range": {
+            "begin": {
+              "offset": 401,
+              "col": 56,
+              "tokLen": 1,
+              "includedFrom": {
+                "file": "cppfunc-sample.cpp"
+              }
+            },
+            "end": {
+              "offset": 402,
+              "col": 57,
+              "tokLen": 1,
+              "includedFrom": {
+                "file": "cppfunc-sample.cpp"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "0x2266d6b48c8",
+      "kind": "FunctionDecl",
+      "loc": {
+        "offset": 468,
+        "file": "cppfunc-sample.cpp",
+        "line": 12,
+        "col": 6,
+        "tokLen": 5
+      },
+      "range": {
+        "begin": {
+          "offset": 463,
+          "col": 1,
+          "tokLen": 4
+        },
+        "end": {
+          "offset": 502,
+          "col": 40,
+          "tokLen": 1
+        }
+      },
+      "name": "hello",
+      "mangledName": "_Z5helloSt6string",
+      "type": {
+        "qualType": "void (std::string)"
+      },
+      "inner": [
+        {
+          "id": "0x2266d68fb70",
+          "kind": "ParmVarDecl",
+          "loc": {
+            "offset": 486,
+            "col": 24,
+            "tokLen": 4
+          },
+          "range": {
+            "begin": {
+              "offset": 474,
+              "col": 12,
+              "tokLen": 3
+            },
+            "end": {
+              "offset": 493,
+              "col": 31,
+              "tokLen": 6
+            }
+          },
+          "name": "name",
+          "type": {
+            "qualType": "std::string"
+          },
+          "init": "c",
+          "inner": [
+            {
+              "id": "0x2266d68fcc8",
+              "kind": "ImplicitCastExpr",
+              "range": {
+                "begin": {
+                  "offset": 493,
+                  "col": 31,
+                  "tokLen": 6
+                },
+                "end": {
+                  "offset": 493,
+                  "col": 31,
+                  "tokLen": 6
+                }
+              },
+              "type": {
+                "qualType": "std::string"
+              },
+              "valueCategory": "prvalue",
+              "castKind": "ConstructorConversion",
+              "conversionFunc": {
+                "id": "0x2266d68efc0",
+                "kind": "CXXConstructorDecl",
+                "name": "string",
+                "type": {
+                  "qualType": "void (const char *)"
+                }
+              },
+              "inner": [
+                {
+                  "id": "0x2266d68fc98",
+                  "kind": "CXXConstructExpr",
+                  "range": {
+                    "begin": {
+                      "offset": 493,
+                      "col": 31,
+                      "tokLen": 6
+                    },
+                    "end": {
+                      "offset": 493,
+                      "col": 31,
+                      "tokLen": 6
+                    }
+                  },
+                  "type": {
+                    "qualType": "std::string"
+                  },
+                  "valueCategory": "prvalue",
+                  "ctorType": {
+                    "qualType": "void (const char *)"
+                  },
+                  "hadMultipleCandidates": true,
+                  "constructionKind": "complete",
+                  "inner": [
+                    {
+                      "id": "0x2266d68fc80",
+                      "kind": "ImplicitCastExpr",
+                      "range": {
+                        "begin": {
+                          "offset": 493,
+                          "col": 31,
+                          "tokLen": 6
+                        },
+                        "end": {
+                          "offset": 493,
+                          "col": 31,
+                          "tokLen": 6
+                        }
+                      },
+                      "type": {
+                        "qualType": "const char *"
+                      },
+                      "valueCategory": "prvalue",
+                      "castKind": "ArrayToPointerDecay",
+                      "inner": [
+                        {
+                          "id": "0x2266d68fc60",
+                          "kind": "StringLiteral",
+                          "range": {
+                            "begin": {
+                              "offset": 493,
+                              "col": 31,
+                              "tokLen": 6
+                            },
+                            "end": {
+                              "offset": 493,
+                              "col": 31,
+                              "tokLen": 6
+                            }
+                          },
+                          "type": {
+                            "qualType": "const char[5]"
+                          },
+                          "valueCategory": "lvalue",
+                          "value": "\"hire\""
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "0x2266d6b49a8",
+          "kind": "CompoundStmt",
+          "range": {
+            "begin": {
+              "offset": 501,
+              "col": 39,
+              "tokLen": 1
+            },
+            "end": {
+              "offset": 502,
+              "col": 40,
+              "tokLen": 1
+            }
+          }
+        },
+        {
+          "id": "0x2266d6b56d0",
+          "kind": "FullComment",
+          "loc": {
+            "offset": 446,
+            "line": 11,
+            "col": 3,
+            "tokLen": 0
+          },
+          "range": {
+            "begin": {
+              "offset": 446,
+              "col": 3,
+              "tokLen": 0
+            },
+            "end": {
+              "offset": 461,
+              "col": 18,
+              "tokLen": 1
+            }
+          },
+          "inner": [
+            {
+              "id": "0x2266d6b56a0",
+              "kind": "ParagraphComment",
+              "loc": {
+                "offset": 446,
+                "col": 3,
+                "tokLen": 0
+              },
+              "range": {
+                "begin": {
+                  "offset": 446,
+                  "col": 3,
+                  "tokLen": 0
+                },
+                "end": {
+                  "offset": 461,
+                  "col": 18,
+                  "tokLen": 1
+                }
+              },
+              "inner": [
+                {
+                  "id": "0x2266d6b5670",
+                  "kind": "TextComment",
+                  "loc": {
+                    "offset": 446,
+                    "col": 3,
+                    "tokLen": 0
+                  },
+                  "range": {
+                    "begin": {
+                      "offset": 446,
+                      "col": 3,
+                      "tokLen": 0
+                    },
+                    "end": {
+                      "offset": 461,
+                      "col": 18,
+                      "tokLen": 1
+                    }
+                  },
+                  "text": " desc: say hello"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "0x2266d6b4a90",
+      "kind": "FunctionDecl",
+      "loc": {
+        "offset": 532,
+        "line": 15,
+        "col": 6,
+        "tokLen": 8
+      },
+      "range": {
+        "begin": {
+          "offset": 527,
+          "col": 1,
+          "tokLen": 4
+        },
+        "end": {
+          "offset": 559,
+          "col": 33,
+          "tokLen": 1
+        }
+      },
+      "name": "greet_cn",
+      "mangledName": "_Z8greet_cnSt6string",
+      "type": {
+        "qualType": "void (std::string)"
+      },
+      "inner": [
+        {
+          "id": "0x2266d6b4a00",
+          "kind": "ParmVarDecl",
+          "loc": {
+            "offset": 553,
+            "col": 27,
+            "tokLen": 3
+          },
+          "range": {
+            "begin": {
+              "offset": 541,
+              "col": 15,
+              "tokLen": 3
+            },
+            "end": {
+              "offset": 553,
+              "col": 27,
+              "tokLen": 3
+            }
+          },
+          "name": "who",
+          "type": {
+            "qualType": "std::string"
+          }
+        },
+        {
+          "id": "0x2266d6b4b68",
+          "kind": "CompoundStmt",
+          "range": {
+            "begin": {
+              "offset": 558,
+              "col": 32,
+              "tokLen": 1
+            },
+            "end": {
+              "offset": 559,
+              "col": 33,
+              "tokLen": 1
+            }
+          }
+        },
+        {
+          "id": "0x2266d6b57a0",
+          "kind": "FullComment",
+          "loc": {
+            "offset": 507,
+            "line": 14,
+            "col": 3,
+            "tokLen": 0
+          },
+          "range": {
+            "begin": {
+              "offset": 507,
+              "col": 3,
+              "tokLen": 0
+            },
+            "end": {
+              "offset": 525,
+              "col": 21,
+              "tokLen": 1
+            }
+          },
+          "inner": [
+            {
+              "id": "0x2266d6b5770",
+              "kind": "ParagraphComment",
+              "loc": {
+                "offset": 507,
+                "col": 3,
+                "tokLen": 0
+              },
+              "range": {
+                "begin": {
+                  "offset": 507,
+                  "col": 3,
+                  "tokLen": 0
+                },
+                "end": {
+                  "offset": 525,
+                  "col": 21,
+                  "tokLen": 1
+                }
+              },
+              "inner": [
+                {
+                  "id": "0x2266d6b5740",
+                  "kind": "TextComment",
+                  "loc": {
+                    "offset": 507,
+                    "col": 3,
+                    "tokLen": 0
+                  },
+                  "range": {
+                    "begin": {
+                      "offset": 507,
+                      "col": 3,
+                      "tokLen": 0
+                    },
+                    "end": {
+                      "offset": 525,
+                      "col": 21,
+                      "tokLen": 1
+                    }
+                  },
+                  "text": " desc: 打个招呼"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "0x2266d6b4fe0",
+      "kind": "FunctionDecl",
+      "loc": {
+        "offset": 635,
+        "line": 19,
+        "col": 6,
+        "tokLen": 5
+      },
+      "range": {
+        "begin": {
+          "offset": 630,
+          "col": 1,
+          "tokLen": 4
+        },
+        "end": {
+          "offset": 725,
+          "col": 96,
+          "tokLen": 1
+        }
+      },
+      "name": "build",
+      "mangledName": "_Z5buildSt6stringibd",
+      "type": {
+        "qualType": "void (std::string, int, bool, double)"
+      },
+      "inner": [
+        {
+          "id": "0x2266d6b4bc0",
+          "kind": "ParmVarDecl",
+          "loc": {
+            "offset": 653,
+            "col": 24,
+            "tokLen": 6
+          },
+          "range": {
+            "begin": {
+              "offset": 641,
+              "col": 12,
+              "tokLen": 3
+            },
+            "end": {
+              "offset": 662,
+              "col": 33,
+              "tokLen": 5
+            }
+          },
+          "name": "target",
+          "type": {
+            "qualType": "std::string"
+          },
+          "init": "c",
+          "inner": [
+            {
+              "id": "0x2266d6b4d18",
+              "kind": "ImplicitCastExpr",
+              "range": {
+                "begin": {
+                  "offset": 662,
+                  "col": 33,
+                  "tokLen": 5
+                },
+                "end": {
+                  "offset": 662,
+                  "col": 33,
+                  "tokLen": 5
+                }
+              },
+              "type": {
+                "qualType": "std::string"
+              },
+              "valueCategory": "prvalue",
+              "castKind": "ConstructorConversion",
+              "conversionFunc": {
+                "id": "0x2266d68efc0",
+                "kind": "CXXConstructorDecl",
+                "name": "string",
+                "type": {
+                  "qualType": "void (const char *)"
+                }
+              },
+              "inner": [
+                {
+                  "id": "0x2266d6b4ce8",
+                  "kind": "CXXConstructExpr",
+                  "range": {
+                    "begin": {
+                      "offset": 662,
+                      "col": 33,
+                      "tokLen": 5
+                    },
+                    "end": {
+                      "offset": 662,
+                      "col": 33,
+                      "tokLen": 5
+                    }
+                  },
+                  "type": {
+                    "qualType": "std::string"
+                  },
+                  "valueCategory": "prvalue",
+                  "ctorType": {
+                    "qualType": "void (const char *)"
+                  },
+                  "hadMultipleCandidates": true,
+                  "constructionKind": "complete",
+                  "inner": [
+                    {
+                      "id": "0x2266d6b4cd0",
+                      "kind": "ImplicitCastExpr",
+                      "range": {
+                        "begin": {
+                          "offset": 662,
+                          "col": 33,
+                          "tokLen": 5
+                        },
+                        "end": {
+                          "offset": 662,
+                          "col": 33,
+                          "tokLen": 5
+                        }
+                      },
+                      "type": {
+                        "qualType": "const char *"
+                      },
+                      "valueCategory": "prvalue",
+                      "castKind": "ArrayToPointerDecay",
+                      "inner": [
+                        {
+                          "id": "0x2266d6b4cb0",
+                          "kind": "StringLiteral",
+                          "range": {
+                            "begin": {
+                              "offset": 662,
+                              "col": 33,
+                              "tokLen": 5
+                            },
+                            "end": {
+                              "offset": 662,
+                              "col": 33,
+                              "tokLen": 5
+                            }
+                          },
+                          "type": {
+                            "qualType": "const char[4]"
+                          },
+                          "valueCategory": "lvalue",
+                          "value": "\"app\""
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "0x2266d6b4d48",
+          "kind": "ParmVarDecl",
+          "loc": {
+            "offset": 673,
+            "col": 44,
+            "tokLen": 3
+          },
+          "range": {
+            "begin": {
+              "offset": 669,
+              "col": 40,
+              "tokLen": 3
+            },
+            "end": {
+              "offset": 679,
+              "col": 50,
+              "tokLen": 1
+            }
+          },
+          "name": "opt",
+          "type": {
+            "qualType": "int"
+          },
+          "init": "c",
+          "inner": [
+            {
+              "id": "0x2266d6b4db0",
+              "kind": "IntegerLiteral",
+              "range": {
+                "begin": {
+                  "offset": 679,
+                  "col": 50,
+                  "tokLen": 1
+                },
+                "end": {
+                  "offset": 679,
+                  "col": 50,
+                  "tokLen": 1
+                }
+              },
+              "type": {
+                "qualType": "int"
+              },
+              "valueCategory": "prvalue",
+              "value": "2"
+            }
+          ]
+        },
+        {
+          "id": "0x2266d6b4de0",
+          "kind": "ParmVarDecl",
+          "loc": {
+            "offset": 687,
+            "col": 58,
+            "tokLen": 7
+          },
+          "range": {
+            "begin": {
+              "offset": 682,
+              "col": 53,
+              "tokLen": 4
+            },
+            "end": {
+              "offset": 697,
+              "col": 68,
+              "tokLen": 5
+            }
+          },
+          "name": "verbose",
+          "type": {
+            "qualType": "bool"
+          },
+          "init": "c",
+          "inner": [
+            {
+              "id": "0x2266d6b4e48",
+              "kind": "CXXBoolLiteralExpr",
+              "range": {
+                "begin": {
+                  "offset": 697,
+                  "col": 68,
+                  "tokLen": 5
+                },
+                "end": {
+                  "offset": 697,
+                  "col": 68,
+                  "tokLen": 5
+                }
+              },
+              "type": {
+                "qualType": "bool"
+              },
+              "valueCategory": "prvalue",
+              "value": false
+            }
+          ]
+        },
+        {
+          "id": "0x2266d6b4e70",
+          "kind": "ParmVarDecl",
+          "loc": {
+            "offset": 711,
+            "col": 82,
+            "tokLen": 5
+          },
+          "range": {
+            "begin": {
+              "offset": 704,
+              "col": 75,
+              "tokLen": 6
+            },
+            "end": {
+              "offset": 719,
+              "col": 90,
+              "tokLen": 3
+            }
+          },
+          "name": "ratio",
+          "type": {
+            "qualType": "double"
+          },
+          "init": "c",
+          "inner": [
+            {
+              "id": "0x2266d6b4ed8",
+              "kind": "FloatingLiteral",
+              "range": {
+                "begin": {
+                  "offset": 719,
+                  "col": 90,
+                  "tokLen": 3
+                },
+                "end": {
+                  "offset": 719,
+                  "col": 90,
+                  "tokLen": 3
+                }
+              },
+              "type": {
+                "qualType": "double"
+              },
+              "valueCategory": "prvalue",
+              "value": "1.5"
+            }
+          ]
+        },
+        {
+          "id": "0x2266d6b50d8",
+          "kind": "CompoundStmt",
+          "range": {
+            "begin": {
+              "offset": 724,
+              "col": 95,
+              "tokLen": 1
+            },
+            "end": {
+              "offset": 725,
+              "col": 96,
+              "tokLen": 1
+            }
+          }
+        },
+        {
+          "id": "0x2266d6b1570",
+          "kind": "FullComment",
+          "loc": {
+            "offset": 564,
+            "line": 17,
+            "col": 3,
+            "tokLen": 0
+          },
+          "range": {
+            "begin": {
+              "offset": 564,
+              "col": 3,
+              "tokLen": 0
+            },
+            "end": {
+              "offset": 628,
+              "line": 18,
+              "col": 42,
+              "tokLen": 1
+            }
+          },
+          "inner": [
+            {
+              "id": "0x2266d6b5860",
+              "kind": "ParagraphComment",
+              "loc": {
+                "offset": 564,
+                "line": 17,
+                "col": 3,
+                "tokLen": 0
+              },
+              "range": {
+                "begin": {
+                  "offset": 564,
+                  "col": 3,
+                  "tokLen": 0
+                },
+                "end": {
+                  "offset": 628,
+                  "line": 18,
+                  "col": 42,
+                  "tokLen": 1
+                }
+              },
+              "inner": [
+                {
+                  "id": "0x2266d6b5810",
+                  "kind": "TextComment",
+                  "loc": {
+                    "offset": 564,
+                    "line": 17,
+                    "col": 3,
+                    "tokLen": 0
+                  },
+                  "range": {
+                    "begin": {
+                      "offset": 564,
+                      "col": 3,
+                      "tokLen": 0
+                    },
+                    "end": {
+                      "offset": 585,
+                      "col": 24,
+                      "tokLen": 1
+                    }
+                  },
+                  "text": " desc: compile the app"
+                },
+                {
+                  "id": "0x2266d6b5830",
+                  "kind": "TextComment",
+                  "loc": {
+                    "offset": 589,
+                    "line": 18,
+                    "col": 3,
+                    "tokLen": 0
+                  },
+                  "range": {
+                    "begin": {
+                      "offset": 589,
+                      "col": 3,
+                      "tokLen": 0
+                    },
+                    "end": {
+                      "offset": 628,
+                      "col": 42,
+                      "tokLen": 1
+                    }
+                  },
+                  "text": " only the first comment line is the desc"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "0x2266d6b5108",
+      "kind": "FunctionDecl",
+      "loc": {
+        "offset": 774,
+        "line": 22,
+        "col": 6,
+        "tokLen": 5
+      },
+      "range": {
+        "begin": {
+          "offset": 769,
+          "col": 1,
+          "tokLen": 4
+        },
+        "end": {
+          "offset": 783,
+          "col": 15,
+          "tokLen": 1
+        }
+      },
+      "name": "plain",
+      "mangledName": "_Z5plainv",
+      "type": {
+        "qualType": "void ()"
+      },
+      "inner": [
+        {
+          "id": "0x2266d6b51d8",
+          "kind": "CompoundStmt",
+          "range": {
+            "begin": {
+              "offset": 782,
+              "col": 14,
+              "tokLen": 1
+            },
+            "end": {
+              "offset": 783,
+              "col": 15,
+              "tokLen": 1
+            }
+          }
+        },
+        {
+          "id": "0x2266d6b1640",
+          "kind": "FullComment",
+          "loc": {
+            "offset": 730,
+            "line": 21,
+            "col": 3,
+            "tokLen": 0
+          },
+          "range": {
+            "begin": {
+              "offset": 730,
+              "col": 3,
+              "tokLen": 0
+            },
+            "end": {
+              "offset": 767,
+              "col": 40,
+              "tokLen": 1
+            }
+          },
+          "inner": [
+            {
+              "id": "0x2266d6b1610",
+              "kind": "ParagraphComment",
+              "loc": {
+                "offset": 730,
+                "col": 3,
+                "tokLen": 0
+              },
+              "range": {
+                "begin": {
+                  "offset": 730,
+                  "col": 3,
+                  "tokLen": 0
+                },
+                "end": {
+                  "offset": 767,
+                  "col": 40,
+                  "tokLen": 1
+                }
+              },
+              "inner": [
+                {
+                  "id": "0x2266d6b15e0",
+                  "kind": "TextComment",
+                  "loc": {
+                    "offset": 730,
+                    "col": 3,
+                    "tokLen": 0
+                  },
+                  "range": {
+                    "begin": {
+                      "offset": 730,
+                      "col": 3,
+                      "tokLen": 0
+                    },
+                    "end": {
+                      "offset": 767,
+                      "col": 40,
+                      "tokLen": 1
+                    }
+                  },
+                  "text": " plain comment line without the prefix"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "0x2266d6b5208",
+      "kind": "FunctionDecl",
+      "loc": {
+        "offset": 858,
+        "line": 26,
+        "col": 6,
+        "tokLen": 8
+      },
+      "range": {
+        "begin": {
+          "offset": 853,
+          "col": 1,
+          "tokLen": 4
+        },
+        "end": {
+          "offset": 870,
+          "col": 18,
+          "tokLen": 1
+        }
+      },
+      "name": "detached",
+      "mangledName": "_Z8detachedv",
+      "type": {
+        "qualType": "void ()"
+      },
+      "inner": [
+        {
+          "id": "0x2266d6b52b0",
+          "kind": "CompoundStmt",
+          "range": {
+            "begin": {
+              "offset": 869,
+              "col": 17,
+              "tokLen": 1
+            },
+            "end": {
+              "offset": 870,
+              "col": 18,
+              "tokLen": 1
+            }
+          }
+        },
+        {
+          "id": "0x2266d6b1710",
+          "kind": "FullComment",
+          "loc": {
+            "offset": 788,
+            "line": 24,
+            "col": 3,
+            "tokLen": 0
+          },
+          "range": {
+            "begin": {
+              "offset": 788,
+              "col": 3,
+              "tokLen": 0
+            },
+            "end": {
+              "offset": 850,
+              "col": 65,
+              "tokLen": 1
+            }
+          },
+          "inner": [
+            {
+              "id": "0x2266d6b16e0",
+              "kind": "ParagraphComment",
+              "loc": {
+                "offset": 788,
+                "col": 3,
+                "tokLen": 0
+              },
+              "range": {
+                "begin": {
+                  "offset": 788,
+                  "col": 3,
+                  "tokLen": 0
+                },
+                "end": {
+                  "offset": 850,
+                  "col": 65,
+                  "tokLen": 1
+                }
+              },
+              "inner": [
+                {
+                  "id": "0x2266d6b16b0",
+                  "kind": "TextComment",
+                  "loc": {
+                    "offset": 788,
+                    "col": 3,
+                    "tokLen": 0
+                  },
+                  "range": {
+                    "begin": {
+                      "offset": 788,
+                      "col": 3,
+                      "tokLen": 0
+                    },
+                    "end": {
+                      "offset": 850,
+                      "col": 65,
+                      "tokLen": 1
+                    }
+                  },
+                  "text": " orphaned above a blank line, clang decides whether it attaches"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "0x2266d6b52e0",
+      "kind": "FunctionDecl",
+      "loc": {
+        "offset": 878,
+        "line": 28,
+        "col": 6,
+        "tokLen": 11
+      },
+      "range": {
+        "begin": {
+          "offset": 873,
+          "col": 1,
+          "tokLen": 4
+        },
+        "end": {
+          "offset": 893,
+          "col": 21,
+          "tokLen": 1
+        }
+      },
+      "name": "uncommented",
+      "mangledName": "_Z11uncommentedv",
+      "type": {
+        "qualType": "void ()"
+      },
+      "inner": [
+        {
+          "id": "0x2266d6b5388",
+          "kind": "CompoundStmt",
+          "range": {
+            "begin": {
+              "offset": 892,
+              "col": 20,
+              "tokLen": 1
+            },
+            "end": {
+              "offset": 893,
+              "col": 21,
+              "tokLen": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "0x2266d6b53b8",
+      "kind": "FunctionDecl",
+      "loc": {
+        "offset": 908,
+        "line": 30,
+        "col": 13,
+        "tokLen": 10
+      },
+      "range": {
+        "begin": {
+          "offset": 896,
+          "col": 1,
+          "tokLen": 6
+        },
+        "end": {
+          "offset": 922,
+          "col": 27,
+          "tokLen": 1
+        }
+      },
+      "name": "helper_one",
+      "mangledName": "_ZL10helper_onev",
+      "type": {
+        "qualType": "void ()"
+      },
+      "storageClass": "static",
+      "inner": [
+        {
+          "id": "0x2266d6b5460",
+          "kind": "CompoundStmt",
+          "range": {
+            "begin": {
+              "offset": 921,
+              "col": 26,
+              "tokLen": 1
+            },
+            "end": {
+              "offset": 922,
+              "col": 27,
+              "tokLen": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "0x2266d6b5470",
+      "kind": "NamespaceDecl",
+      "loc": {
+        "offset": 935,
+        "line": 32,
+        "col": 11,
+        "tokLen": 1
+      },
+      "range": {
+        "begin": {
+          "offset": 925,
+          "col": 1,
+          "tokLen": 9
+        },
+        "end": {
+          "offset": 958,
+          "col": 34,
+          "tokLen": 1
+        }
+      },
+      "inner": [
+        {
+          "id": "0x2266d6b5558",
+          "kind": "FunctionDecl",
+          "loc": {
+            "offset": 942,
+            "col": 18,
+            "tokLen": 10
+          },
+          "range": {
+            "begin": {
+              "offset": 937,
+              "col": 13,
+              "tokLen": 4
+            },
+            "end": {
+              "offset": 956,
+              "col": 32,
+              "tokLen": 1
+            }
+          },
+          "name": "helper_two",
+          "mangledName": "_ZN12_GLOBAL__N_110helper_twoEv",
+          "type": {
+            "qualType": "void ()"
+          },
+          "inner": [
+            {
+              "id": "0x2266d6b5600",
+              "kind": "CompoundStmt",
+              "range": {
+                "begin": {
+                  "offset": 955,
+                  "col": 31,
+                  "tokLen": 1
+                },
+                "end": {
+                  "offset": 956,
+                  "col": 32,
+                  "tokLen": 1
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "0x2266d6b54e0",
+      "kind": "UsingDirectiveDecl",
+      "loc": {},
+      "range": {
+        "begin": {
+          "offset": 935,
+          "col": 11,
+          "tokLen": 1
+        },
+        "end": {}
+      },
+      "isImplicit": true,
+      "nominatedNamespace": {
+        "id": "0x2266d6b5470",
+        "kind": "NamespaceDecl",
+        "name": ""
+      }
+    }
+  ]
+}
