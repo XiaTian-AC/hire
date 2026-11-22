@@ -332,8 +332,11 @@ process.stdout.write("hello, " + (args.name || "hire") + "\n");
 ### C++（Taskfile.cpp，函数形式 + 用户自配 clang++）
 
 `hire init --lang cpp` 生成 `Taskfile.cpp`——纯 C++ 函数：每个顶层非 static
-自由函数就是一个任务；紧邻函数上方的 `//` 注释首行（约定 `// desc: ...`）是任务描述；
-`static` 或匿名命名空间里的函数是助手。参数映射：`std::string`/`string`→string、
+自由函数就是一个任务；紧邻函数上方的 `//` 注释首行（约定 `// desc: ...`）是任务描述
+（注释归属按 clang `-fparse-all-comments` 的实际行为：注释与函数之间空一行仍会挂到该函数上，
+所以"紧邻"并非必须零行距）；`static` 或匿名命名空间里的函数是助手。
+同一函数的转发声明与定义会被 clang 以 `previousDecl` 关联，只算一个任务；`extern` 声明
+（本翻译单元无函数体）不会被选为任务。参数映射：`std::string`/`string`→string、
 `bool`→flag、`int`/`long`/`long long`/`double`/`float`→num；**有默认值 = 可选**
 （默认值写进参数 desc 提示位，如 `default: 8080`），无默认 = 必填；不支持的参数类型
 加载期报错（点名函数+参数）。
@@ -347,9 +350,10 @@ process.stdout.write("hello, " + (args.name || "hire") + "\n");
    SDK 头）+ `#include "<Taskfile.cpp 绝对路径>"` + 逐函数注册代码（HIRE_ARGS JSON →
    类型化转换后**直接以实参调用**你的函数）+ main() 由 hire.hpp 提供。include 语义保证
    编译器诊断按你的真实行号报告。
-3. 编译仍走你的 build 模板（对象 = 包装 TU，`{src}` 传包装 TU 路径）；缓存键 =
-   sha256(源文件内容 + NUL + build 命令)，解析+discover 结果缓存为
-   `<cachedir>/hire/cpp/<hash>.tasks.json`——命中时零解析、零执行、零重编。
+3. 编译仍走你的 build 模板（对象 = 包装 TU，`{src}` 传包装 TU 路径）；函数形式的缓存键 =
+   sha256(源文件内容 + NUL + build 命令 + NUL + 内嵌 SDK 头字节 + NUL + 代码生成版本号)，
+   解析+discover 结果缓存为 `<cachedir>/hire/cpp/<hash>.tasks.json`——命中时零解析、零执行、
+   零重编（遗留契约形态仍用 sha256(源文件内容 + NUL + build 命令)，不含代码生成盐）。
 4. config.lua 可覆盖解析器：`cpp = { build = "...", parser = "clang++" }`
    （缺省探测 clang++ → clang）。无 clang 时函数形式 discover 报错指引：装
    clang++，或改用下面的 hpp 链式形态。

@@ -114,11 +114,14 @@ func TestCppFuncFormChain(t *testing.T) {
 		t.Fatalf("serve round trip = %q", string(got))
 	}
 
-	// Cache artifacts land at the spec'd key paths beside the exe.
-	exe := cachedPath(t, base, "cpp", src, build)
-	if _, err := os.Stat(exe); err != nil {
-		t.Fatalf("built exe missing: %v", err)
+	// Cache artifacts land beside the exe. The function-form key adds a
+	// codegen salt on top of cacheKey(src, build), so locate the built
+	// exe by glob rather than recomputing the raw key here.
+	exes, err := filepath.Glob(filepath.Join(base, "hire", "cpp", "*.exe"))
+	if err != nil || len(exes) != 1 {
+		t.Fatalf("want one function-form exe, got %v (%v)", exes, err)
 	}
+	exe := exes[0]
 	tasksJSON := strings.TrimSuffix(exe, ".exe") + ".tasks.json"
 	if _, err := os.Stat(tasksJSON); err != nil {
 		t.Fatalf("parse cache missing: %v", err)
@@ -136,8 +139,12 @@ func TestCppFuncFormChain(t *testing.T) {
 		[]byte(`{"tasks":[{"name":"hello","desc":"`+marker+`","args":{"k":{"type":"num","required":true,"desc":""}}}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Strip PATH with an explicit save/restore pair: t.Setenv cannot be
+	// undone before the test ends, and this leg needs PATH back for the
+	// following runs.
 	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", t.TempDir()) // no clang, no g++, no shell - nothing to run
+	t.Cleanup(func() { os.Setenv("PATH", oldPath) })
+	os.Setenv("PATH", t.TempDir()) // no clang, no g++, no shell - nothing to run
 	f2, err := adapter.LoadExec(path, spec, "cpp")
 	if err != nil {
 		t.Fatalf("LoadExec (cache hit, no toolchains): %v", err)
@@ -157,8 +164,7 @@ func TestCppFuncFormChain(t *testing.T) {
 	}
 
 	// Rebuild: with the exe gone the slow path runs again and restores
-	// the real discover payload.
-	os.Setenv("PATH", oldPath)
+	// the real discover payload (PATH is already restored above).
 	if err := os.Remove(exe); err != nil {
 		t.Fatal(err)
 	}
@@ -256,6 +262,41 @@ func TestCppDualFormChain(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(writeTo); string(got) != "hello, dual x1\n" {
 		t.Fatalf("hello round trip = %q", string(got))
+	}
+}
+
+// TestCppFuncFormForwardDeclAndExtern is the live reproduction for the
+// review's Important 1 and 4: a forward declaration + definition of the
+// same function folds into one task (not "declared twice"), the earlier
+// declaration's comment survives, and an extern declaration with no body
+// in this TU is not selected as a task.
+func TestCppFuncFormForwardDeclAndExtern(t *testing.T) {
+	clang := probeCmd(t, "clang++", "clang")
+	probeCmd(t, "g++")
+	spacedCacheDir(t)
+	path := filepath.Join(t.TempDir(), "Taskfile.cpp")
+	src := `// desc: forward-declared serve
+void serve(int port);
+
+extern void external_helper(int port);
+
+// desc: definition below
+void serve(int port) { (void)port; }
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := adapter.RuntimeSpec{Build: "g++ -std=c++20 -O2 -o {out} {src}", Parser: clang}
+	f, err := adapter.LoadExec(path, spec, "cpp")
+	if err != nil {
+		t.Fatalf("LoadExec (forward decl + definition): %v", err)
+	}
+	t.Cleanup(f.Close)
+	if strings.Join(f.Order, ",") != "serve" {
+		t.Fatalf("Order = %v, want [serve] (extern excluded, redecl folded)", f.Order)
+	}
+	if got := f.Tasks["serve"].Desc; got != "forward-declared serve" {
+		t.Errorf("serve.Desc = %q, want the earlier declaration's comment", got)
 	}
 }
 

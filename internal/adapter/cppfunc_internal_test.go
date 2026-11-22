@@ -97,6 +97,87 @@ func TestParseASTFixture(t *testing.T) {
 	}
 }
 
+// TestParseASTRedeclarations reproduces the review's Important 1:
+// clang emits one FunctionDecl per declaration and stamps previousDecl
+// on the later ones, so a forward declaration + definition (even a
+// three-node chain) must fold into one linkable task, while a genuine
+// overload stays distinct and is rejected by validation. The JSON shape
+// here is copied from a real clang 19 -Xclang -ast-dump=json run.
+func TestParseASTRedeclarations(t *testing.T) {
+	const ast = `{"kind":"TranslationUnitDecl","inner":[
+		{"kind":"FunctionDecl","id":"0x1","name":"serve","loc":{"file":"Taskfile.cpp"},"inner":[
+			{"kind":"ParmVarDecl","name":"port","type":{"qualType":"int"}},
+			{"kind":"FullComment","inner":[{"kind":"ParagraphComment","inner":[{"kind":"TextComment","text":" desc: serve traffic"}]}]}]},
+		{"kind":"FunctionDecl","id":"0x2","previousDecl":"0x1","name":"serve","inner":[
+			{"kind":"ParmVarDecl","name":"port","type":{"qualType":"int"}},
+			{"kind":"CompoundStmt"}]},
+		{"kind":"FunctionDecl","id":"0x3","previousDecl":"0x2","name":"serve","inner":[
+			{"kind":"CompoundStmt"}]},
+		{"kind":"FunctionDecl","id":"0x4","name":"ext","storageClass":"extern","loc":{"file":"Taskfile.cpp"},"inner":[
+			{"kind":"ParmVarDecl","name":"x","type":{"qualType":"int"}}]}
+	]}`
+	tasks, err := parseAST(strings.NewReader(ast), "Taskfile.cpp")
+	if err != nil {
+		t.Fatalf("parseAST: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("extracted %d tasks, want 1 (forward decl + 2 redecls): %+v", len(tasks), tasks)
+	}
+	got := tasks[0]
+	if got.Name != "serve" || got.Desc != "serve traffic" || !got.hasBody {
+		t.Errorf("folded task = %+v, want serve / serve traffic / hasBody", got)
+	}
+	if err := validateFuncTasks("Taskfile.cpp", tasks); err != nil {
+		t.Errorf("folded task rejected: %v", err)
+	}
+	for _, task := range tasks {
+		if task.Name == "ext" {
+			t.Error("extern declaration must not be a task")
+		}
+	}
+
+	// Two defined overloads carry different ids and no previousDecl link:
+	// they must survive as two tasks so validation reports the overload.
+	const overloads = `{"kind":"TranslationUnitDecl","inner":[
+		{"kind":"FunctionDecl","id":"0xa","name":"dup","loc":{"file":"Taskfile.cpp"},"inner":[
+			{"kind":"ParmVarDecl","name":"x","type":{"qualType":"int"}},{"kind":"CompoundStmt"}]},
+		{"kind":"FunctionDecl","id":"0xb","name":"dup","loc":{"file":"Taskfile.cpp"},"inner":[
+			{"kind":"ParmVarDecl","name":"y","type":{"qualType":"double"}},{"kind":"CompoundStmt"}]}
+	]}`
+	tasks, err = parseAST(strings.NewReader(overloads), "Taskfile.cpp")
+	if err != nil {
+		t.Fatalf("parseAST (overloads): %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("overloads folded into %d tasks, want 2", len(tasks))
+	}
+	if err := validateFuncTasks("Taskfile.cpp", tasks); err == nil ||
+		!strings.Contains(err.Error(), "declared twice") {
+		t.Errorf("overloads must be rejected, got %v", err)
+	}
+}
+
+// TestCppfuncCacheKeyVersioned pins the review's Important 2: the
+// function-form key is the raw key plus the wrapper codegen inputs, so
+// it differs from the raw path for the same src+build and moves when
+// either the header bytes or the codegen version salt changes.
+func TestCppfuncCacheKeyVersioned(t *testing.T) {
+	src, build := []byte("void serve(int port) {}\n"), "g++ -std=c++20 -o {out} {src}"
+	fnKey := cppfuncCacheKey(src, build)
+	if fnKey == cacheKey(src, build) {
+		t.Fatal("function-form key must differ from the raw cache key")
+	}
+	if fnKey != cppfuncKeyWith(src, build, CppHeaderTemplate, cppfuncCodegenVersion) {
+		t.Fatal("function-form key does not hash the header and version")
+	}
+	if fnKey == cppfuncKeyWith(src, build, CppHeaderTemplate, cppfuncCodegenVersion+1) {
+		t.Error("key did not change with the codegen version salt")
+	}
+	if fnKey == cppfuncKeyWith(src, build, CppHeaderTemplate+"\n// changed", cppfuncCodegenVersion) {
+		t.Error("key did not change with the SDK header bytes")
+	}
+}
+
 // TestParseASTMalformed pins the tolerance rules (ruling 2): garbage is
 // an error, never a panic, and missing fields degrade to empty results.
 func TestParseASTMalformed(t *testing.T) {
@@ -139,7 +220,7 @@ func TestMapCxxType(t *testing.T) {
 	ok := map[string]string{
 		"std::string": "string", "string": "string",
 		"bool": "bool",
-		"int": "num", "long": "num", "long long": "num", "double": "num", "float": "num",
+		"int":  "num", "long": "num", "long long": "num", "double": "num", "float": "num",
 	}
 	for cxx, want := range ok {
 		got, err := mapCxxType(cxx)

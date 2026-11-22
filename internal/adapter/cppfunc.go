@@ -11,6 +11,7 @@ package adapter
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -21,7 +22,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // isContractForm reports whether a C++ source speaks the raw __hire__
@@ -46,6 +49,8 @@ type FuncTask struct {
 	Name   string      `json:"name"`
 	Desc   string      `json:"desc"`
 	Params []FuncParam `json:"params,omitempty"`
+
+	hasBody bool `json:"-"` // the definition was seen; a bare declaration cannot link
 }
 
 // mapCxxType maps a C++ parameter spelling to a hire arg type. The
@@ -70,10 +75,12 @@ func mapCxxType(cxx string) (string, error) {
 // missing fields degrade, and nodes that fail to decode are skipped.
 type astNode struct {
 	Kind         string          `json:"kind"`
+	ID           string          `json:"id"`
 	Name         string          `json:"name"`
 	StorageClass string          `json:"storageClass"`
 	IsImplicit   bool            `json:"isImplicit"`
 	Opcode       string          `json:"opcode"`
+	PreviousDecl json.RawMessage `json:"previousDecl"`
 	Type         *astType        `json:"type"`
 	Init         json.RawMessage `json:"init"`
 	Text         string          `json:"text"`
@@ -101,11 +108,15 @@ type astProbe struct {
 
 // parseAST extracts the task functions from a clang JSON AST dump. Only
 // the translation unit's direct children are examined: static functions
-// are excluded by storageClass, header decls by the source-file filter,
+// are excluded by storageClass, explicit-extern declarations (defined
+// in another TU) are skipped, header decls by the source-file filter,
 // and namespace-nested helpers (anonymous or not) never appear at this
-// level at all. Each kept FunctionDecl is decoded whole, so memory
-// stays bounded by one function's subtree even when system headers
-// dominate the dump.
+// level at all. Redefinition chains (forward declaration + definition)
+// merge into one task via previousDecl; only genuine overloads survive
+// as duplicates and fail validation. Each kept node is decoded whole,
+// so memory stays bounded by one top-level declaration's subtree (the
+// <iostream> NamespaceDecl is buffered whole too) even when system
+// headers dominate the dump.
 func parseAST(r io.Reader, srcPath string) ([]FuncTask, error) {
 	dec := json.NewDecoder(r)
 	tok, err := dec.Token()
@@ -116,7 +127,8 @@ func parseAST(r io.Reader, srcPath string) ([]FuncTask, error) {
 		return nil, fmt.Errorf("clang AST output is not a JSON object")
 	}
 	var tasks []FuncTask
-	file := "" // last file clang printed a location for
+	byID := map[string]int{} // clang decl id -> index into tasks
+	file := ""               // last file clang printed a location for
 	for dec.More() {
 		keyTok, err := dec.Token()
 		if err != nil {
@@ -146,13 +158,30 @@ func parseAST(r io.Reader, srcPath string) ([]FuncTask, error) {
 			if probe.Kind != "FunctionDecl" {
 				continue
 			}
-			task, ok, err := funcTaskFromNode(raw, file, srcPath)
+			decl, ok, err := funcTaskFromNode(raw, file, srcPath)
 			if err != nil {
 				return nil, err
 			}
-			if ok {
-				tasks = append(tasks, task)
+			if !ok {
+				continue
 			}
+			// previousDecl is clang's own proof that this node is the
+			// same entity as an earlier declaration, not an overload:
+			// fold the chain into one task, keeping the definition's
+			// body and the declaration's comment/defaults. Genuine
+			// overloads carry no such link, so they stay distinct and
+			// validateFuncTasks still rejects the duplicate name.
+			if idx, seen := byID[decl.PrevID]; decl.PrevID != "" && seen {
+				mergeRedecl(&tasks[idx], decl.Task)
+				if decl.ID != "" {
+					byID[decl.ID] = idx // keep long chains linkable
+				}
+				continue
+			}
+			if decl.ID != "" {
+				byID[decl.ID] = len(tasks)
+			}
+			tasks = append(tasks, decl.Task)
 		}
 		if _, err := dec.Token(); err != nil { // consume ']'
 			return nil, fmt.Errorf("clang AST output is not valid JSON: %v", err)
@@ -186,22 +215,32 @@ func skipJSONValue(dec *json.Decoder) error {
 	return err
 }
 
+// funcDecl is one decoded FunctionDecl candidate plus clang's identity
+// links: ID is this declaration's node id, PrevID the id clang stamped
+// on its previousDecl (empty when the node starts a new redecl chain).
+type funcDecl struct {
+	Task   FuncTask
+	ID     string
+	PrevID string
+}
+
 // funcTaskFromNode decodes one top-level FunctionDecl candidate into a
-// FuncTask. ok=false with a nil error means "not a task": implicit or
-// static functions, or decls belonging to another source file.
-func funcTaskFromNode(raw json.RawMessage, file, srcPath string) (FuncTask, bool, error) {
+// FuncTask. ok=false with a nil error means "not a task": implicit,
+// static or extern functions, or decls belonging to another source file.
+func funcTaskFromNode(raw json.RawMessage, file, srcPath string) (funcDecl, bool, error) {
 	var fn astNode
 	if jerr := json.Unmarshal(raw, &fn); jerr != nil {
-		return FuncTask{}, false, nil // drifted shape: skip, not fatal
+		return funcDecl{}, false, nil // drifted shape: skip, not fatal
 	}
-	if fn.Name == "" || fn.IsImplicit || fn.StorageClass == "static" {
-		return FuncTask{}, false, nil
+	if fn.Name == "" || fn.IsImplicit || fn.StorageClass == "static" ||
+		fn.StorageClass == "extern" {
+		return funcDecl{}, false, nil // extern has no body in this TU: linking would fail
 	}
 	if fn.Loc != nil && fn.Loc.File != "" {
 		file = fn.Loc.File
 	}
 	if !clangFileMatches(file, srcPath) {
-		return FuncTask{}, false, nil
+		return funcDecl{}, false, nil
 	}
 	t := FuncTask{Name: fn.Name}
 	for i := range fn.Inner {
@@ -211,9 +250,46 @@ func funcTaskFromNode(raw json.RawMessage, file, srcPath string) (FuncTask, bool
 			t.Desc = commentDesc(child)
 		case "ParmVarDecl":
 			t.Params = append(t.Params, funcParam(child))
+		case "CompoundStmt":
+			t.hasBody = true // a definition; a bare declaration cannot link
 		}
 	}
-	return t, true, nil
+	return funcDecl{Task: t, ID: fn.ID, PrevID: previousDeclID(fn.PreviousDecl)}, true, nil
+}
+
+// previousDeclID reads clang's previousDecl link. clang 19 emits the id
+// as a bare JSON string; tolerate an object with an "id" from other
+// versions, and an absent/null link on a first declaration.
+func previousDeclID(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var id string
+	if json.Unmarshal(raw, &id) == nil {
+		return id
+	}
+	var obj struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(raw, &obj) == nil {
+		return obj.ID
+	}
+	return ""
+}
+
+// mergeRedecl folds a later declaration of the same entity into the
+// task extracted from an earlier one. The earlier node usually holds
+// the doc comment and default arguments; the later one may hold the
+// body. Prefer what is already there so neither source of metadata is
+// lost, and remember that a definition has been seen.
+func mergeRedecl(dst *FuncTask, src FuncTask) {
+	if dst.Desc == "" {
+		dst.Desc = src.Desc
+	}
+	if len(dst.Params) == 0 {
+		dst.Params = src.Params
+	}
+	dst.hasBody = dst.hasBody || src.hasBody
 }
 
 // funcParam extracts one parameter: its name, the as-written type, and
@@ -373,13 +449,20 @@ func normClangPath(p string) string {
 
 // ---------- live parse ----------
 
+// cppfuncParseTimeout bounds a clang parse so a pathological include
+// cannot hang `hire ls` forever. Task execution stays unbounded; only
+// this discovery-time parse is time-limited.
+const cppfuncParseTimeout = 60 * time.Second
+
 // parseFuncForm runs the user's clang parser over a function-form
 // taskfile and extracts its task functions. The AST stream is decoded
 // incrementally, so even header-heavy dumps stay memory-bounded.
 // Syntax errors surface clang's own diagnostics, which name the user's
 // real file:line.
 func parseFuncForm(srcPath, clangCmd string) ([]FuncTask, error) {
-	cmd := exec.Command(clangCmd, "-Xclang", "-ast-dump=json", "-fsyntax-only", "-fparse-all-comments", srcPath)
+	ctx, cancel := context.WithTimeout(context.Background(), cppfuncParseTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, clangCmd, "-Xclang", "-ast-dump=json", "-fsyntax-only", "-fparse-all-comments", srcPath)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -391,6 +474,9 @@ func parseFuncForm(srcPath, clangCmd string) ([]FuncTask, error) {
 	}
 	tasks, perr := parseAST(stdout, srcPath)
 	werr := cmd.Wait()
+	if werr != nil && ctx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("clang parser %q timed out after %s", clangCmd, cppfuncParseTimeout)
+	}
 	if werr != nil {
 		var ee *exec.ExitError
 		if errors.As(werr, &ee) {
@@ -600,20 +686,47 @@ func writeTaskRegistration(b *strings.Builder, t *FuncTask) error {
 
 // ---------- load orchestration ----------
 
+// cppfuncCodegenVersion salts the function-form cache key. Bump it when
+// wrapper generation changes incompatibly, so a stale exe built by an
+// older generator can never be reused. The raw-contract path keeps the
+// plain cacheKey(src, build) identity.
+const cppfuncCodegenVersion = 1
+
+// cppfuncCacheKey is the function-form cache identity: the raw key plus
+// the wrapper codegen inputs (the SDK header bytes and the codegen
+// version). A change to either yields a fresh key and a full reload.
+func cppfuncCacheKey(src []byte, build string) string {
+	return cppfuncKeyWith(src, build, CppHeaderTemplate, cppfuncCodegenVersion)
+}
+
+// cppfuncKeyWith is the hashing core, taking the codegen inputs explicitly
+// so tests can pin that both the header and the version salt change the key.
+func cppfuncKeyWith(src []byte, build, header string, version int) string {
+	h := sha256.New()
+	h.Write(src)
+	h.Write([]byte{0})
+	h.Write([]byte(build))
+	h.Write([]byte{0})
+	h.Write([]byte(header))
+	h.Write([]byte{0})
+	h.Write([]byte(strconv.Itoa(version)))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // loadCppFuncForm loads a function-form C++ taskfile end to end. Fast
 // path: a cached discover payload next to a built exe reloads with zero
 // parse, zero exec and zero rebuild. Slow path: parse with the user's
 // clang, validate, generate the wrapper, compile it through the build
 // template ({src} = the wrapper, not the user file), discover once
 // through the built binary, and cache the discover output beside the
-// exe as <cacheKey>.tasks.json.
+// exe as <cppfuncCacheKey>.tasks.json.
 func loadCppFuncForm(path, rtName string, spec RuntimeSpec, src []byte) (*File, error) {
 	base, err := cacheBaseDir()
 	if err != nil {
 		return nil, err
 	}
 	dir := filepath.Join(base, "hire", rtName)
-	key := cacheKey(src, spec.Build)
+	key := cppfuncCacheKey(src, spec.Build)
 	tasksFile := filepath.Join(dir, key+".tasks.json")
 	exe := filepath.Join(dir, key+".exe")
 
