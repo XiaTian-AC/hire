@@ -13,6 +13,7 @@ import (
 
 	"hire/internal/adapter"
 	"hire/internal/runtime"
+	"hire/internal/shell"
 )
 
 func writeTOML(t *testing.T, content string) string {
@@ -56,14 +57,27 @@ func runTOMLTask(t *testing.T, f *adapter.File, name string, args *lua.LTable) (
 	return out.String(), err
 }
 
+func mustShell(t *testing.T, name string) {
+	t.Helper()
+	if _, err := shell.Resolve(name, map[string]string{}); err != nil {
+		t.Skipf("skipping: %v", err)
+	}
+}
+
+// --- basic schema ---
+
 func TestTOMLCmdString(t *testing.T) {
 	f := loadTOML(t, `
 [tasks.clean]
+desc = "remove build artifacts"
 cmd = "rm -rf dist/"
 `)
 	task, ok := f.Tasks["clean"]
 	if !ok {
 		t.Fatal("clean task not found")
+	}
+	if task.Desc != "remove build artifacts" {
+		t.Errorf("Desc = %q", task.Desc)
 	}
 	if task.Fn == nil {
 		t.Error("cmd string task should synthesize an Fn")
@@ -73,81 +87,35 @@ cmd = "rm -rf dist/"
 	}
 }
 
-func TestTOMLCmdArray(t *testing.T) {
+func TestTOMLCmdsArray(t *testing.T) {
 	f := loadTOML(t, `
 [tasks.quick]
-cmd = ["echo line1", "echo line2"]
+cmds = ["echo line1", "echo line2"]
 `)
 	task, ok := f.Tasks["quick"]
 	if !ok {
 		t.Fatal("quick task not found")
 	}
 	if task.Fn == nil {
-		t.Error("cmd array task should synthesize an Fn")
+		t.Error("cmds array task should synthesize an Fn")
 	}
 }
 
-func TestTOMLRunInlineExecutes(t *testing.T) {
+func TestTOMLCmdsOrder(t *testing.T) {
 	f := loadTOML(t, `
-[tasks.greet]
-desc = "say hi"
-run = """
-x.echo("hi " .. args.msg)
-"""
-[tasks.greet.args.msg]
-required = true
-desc = "who to greet"
+[tasks.seq]
+cmds = ["echo one", "echo two", "echo three"]
 `)
-	task, ok := f.Tasks["greet"]
-	if !ok {
-		t.Fatal("greet task not found")
-	}
-	if task.Desc != "say hi" {
-		t.Errorf("Desc = %q", task.Desc)
-	}
-	msg := task.Args["msg"]
-	if !msg.Required || msg.Type != "string" || msg.Desc != "who to greet" {
-		t.Errorf("msg spec = %+v", msg)
-	}
-	args := f.L.NewTable()
-	args.RawSetString("msg", lua.LString("toml"))
-	out, err := runTOMLTask(t, f, "greet", args)
+	out, err := runTOMLTask(t, f, "seq", f.L.NewTable())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "hi toml") {
-		t.Errorf("output = %q, want inline run to execute with x.echo", out)
+	i1, i2, i3 := strings.Index(out, "one"), strings.Index(out, "two"), strings.Index(out, "three")
+	if i1 < 0 || i2 < 0 || i3 < 0 {
+		t.Fatalf("output = %q, want one/two/three all present", out)
 	}
-}
-
-func TestTOMLCmdAndRunBoth(t *testing.T) {
-	err := loadTOMLErr(t, `
-[tasks.bad]
-cmd = "echo hi"
-run = "x.echo(\"hi\")"
-`)
-	if !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Errorf("error should mention exclusivity: %v", err)
-	}
-}
-
-func TestTOMLNeitherCmdNorRun(t *testing.T) {
-	err := loadTOMLErr(t, `
-[tasks.bad]
-desc = "incomplete"
-`)
-	if !strings.Contains(err.Error(), "run") || !strings.Contains(err.Error(), "cmd") {
-		t.Errorf("error should mention run/cmd: %v", err)
-	}
-}
-
-func TestTOMLCmdBadType(t *testing.T) {
-	err := loadTOMLErr(t, `
-[tasks.bad]
-cmd = [1, 2]
-`)
-	if !strings.Contains(err.Error(), "cmd") {
-		t.Errorf("error should mention cmd: %v", err)
+	if !(i1 < i2 && i2 < i3) {
+		t.Errorf("output = %q, cmds must run in order", out)
 	}
 }
 
@@ -318,33 +286,545 @@ func TestTOMLBadSyntax(t *testing.T) {
 func TestTOMLUnknownField(t *testing.T) {
 	err := loadTOMLErr(t, `
 [tasks.typo]
-cmds = "echo hi"
+cmdd = "echo hi"
 `)
-	if !strings.Contains(err.Error(), "cmds") {
+	if !strings.Contains(err.Error(), "cmdd") {
 		t.Errorf("error should name the unknown field: %v", err)
 	}
 }
 
-func TestTOMLRunCompileError(t *testing.T) {
+// --- load validation: run removed, cmd/cmds exclusivity ---
+
+func TestTOMLRunRemoved(t *testing.T) {
 	err := loadTOMLErr(t, `
 [tasks.bad]
-run = "x.echo(broken"
+run = "x.echo(\"hi\")"
 `)
-	if !strings.Contains(err.Error(), "bad") {
-		t.Errorf("error should name the task: %v", err)
+	for _, want := range []string{"bad", "removed", "py/cpp/lua"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+	// run alongside cmd still names the removal first.
+	err = loadTOMLErr(t, `
+[tasks.bad2]
+cmd = "echo hi"
+run = "x.echo(1)"
+`)
+	if !strings.Contains(err.Error(), "removed") {
+		t.Errorf("error %q should say run was removed", err.Error())
 	}
 }
 
-func TestTOMLRunExecutesViaShell(t *testing.T) {
-	f := loadTOML(t, `
-[tasks.also_sh]
-run = "x.sh(\"echo from-inline-sh\")"
+func TestTOMLCmdAndCmdsBoth(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.bad]
+cmd = "echo one"
+cmds = ["echo two"]
 `)
-	out, err := runTOMLTask(t, f, "also_sh", f.L.NewTable())
+	for _, want := range []string{"bad", "mutually exclusive"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestTOMLNeitherCmdNorCmds(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.bad]
+desc = "incomplete"
+`)
+	if !strings.Contains(err.Error(), "cmd") || !strings.Contains(err.Error(), "cmds") {
+		t.Errorf("error should mention cmd/cmds: %v", err)
+	}
+}
+
+func TestTOMLCmdNotString(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.bad]
+cmd = [1, 2]
+`)
+	for _, want := range []string{"bad", "cmd", "string"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestTOMLCmdsNotArray(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.bad]
+cmds = "echo hi"
+`)
+	for _, want := range []string{"bad", "cmds", "array"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestTOMLCmdsNonStringElements(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.bad]
+cmds = ["echo ok", 2]
+`)
+	for _, want := range []string{"bad", "cmds", "strings"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+// --- load validation: deps (file-local, full validation at load) ---
+
+func TestTOMLUnknownDep(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.main]
+deps = ["nope"]
+cmd = "echo hi"
+`)
+	for _, want := range []string{"Taskfile.toml", "main", "nope", "unknown dep"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestTOMLDepWhenFiltered(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.gone]
+cmd = "echo hi"
+when = { os = "not-an-os" }
+
+[tasks.main]
+deps = ["gone"]
+cmd = "echo hi"
+`)
+	for _, want := range []string{"Taskfile.toml", "main", "gone", "unknown dep"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestTOMLDepHasRequiredArgs(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.build]
+cmd = "echo hi"
+[tasks.build.args.tag]
+required = true
+
+[tasks.main]
+deps = ["build"]
+cmd = "echo hi"
+`)
+	for _, want := range []string{"Taskfile.toml", "main", "build", "required"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestTOMLDepCycle(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.a]
+deps = ["c"]
+cmd = "echo a"
+
+[tasks.b]
+deps = ["a"]
+cmd = "echo b"
+
+[tasks.c]
+deps = ["b"]
+cmd = "echo c"
+`)
+	for _, want := range []string{"cycle", "a -> c -> b -> a"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestTOMLDepSelfCycle(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.selfy]
+deps = ["selfy"]
+cmd = "echo hi"
+`)
+	for _, want := range []string{"cycle", "selfy -> selfy"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+// --- load validation: placeholders ---
+
+func TestTOMLUnknownPlaceholder(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.bad]
+cmd = "echo {{typo}}"
+`)
+	for _, want := range []string{"bad", "unknown placeholder", "{{typo}}"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestTOMLEmptyPlaceholder(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.bad]
+cmd = "echo {{ }}"
+`)
+	for _, want := range []string{"bad", "unknown placeholder", "{{ }}"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestTOMLUnclosedPlaceholder(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.bad]
+cmd = "echo {{oops"
+`)
+	for _, want := range []string{"bad", "unclosed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestTOMLConditionalOnNonBool(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.bad]
+cmd = "git push {{tag:+--force}}"
+[tasks.bad.args.tag]
+required = true
+`)
+	for _, want := range []string{"bad", "tag", "bool"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestTOMLBoolPlainForm(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.bad]
+cmd = "echo {{force}}"
+[tasks.bad.args.force]
+type = "bool"
+`)
+	for _, want := range []string{"bad", "force", "conditional"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+// --- interpolation execution ---
+
+func TestTOMLInterpolationString(t *testing.T) {
+	f := loadTOML(t, `
+[tasks.hello]
+cmd = "echo hello-{{name}}"
+[tasks.hello.args.name]
+required = true
+desc = "who to greet"
+`)
+	task := f.Tasks["hello"]
+	if sp := task.Args["name"]; !sp.Required || sp.Type != "string" || sp.Desc != "who to greet" {
+		t.Errorf("name spec = %+v", sp)
+	}
+	args := f.L.NewTable()
+	args.RawSetString("name", lua.LString("toml"))
+	out, err := runTOMLTask(t, f, "hello", args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "from-inline-sh") {
-		t.Errorf("output = %q, want inline run x.sh output", out)
+	if !strings.Contains(out, "hello-toml") {
+		t.Errorf("output = %q, want interpolated greeting", out)
+	}
+}
+
+func TestTOMLInterpolationOptionalMissing(t *testing.T) {
+	f := loadTOML(t, `
+[tasks.opt]
+cmd = "echo greet=[{{opt}}]"
+[tasks.opt.args.opt]
+desc = "optional suffix"
+`)
+	out, err := runTOMLTask(t, f, "opt", f.L.NewTable())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "greet=[]") {
+		t.Errorf("output = %q, want optional-missing to render empty", out)
+	}
+}
+
+func TestTOMLInterpolationSpaces(t *testing.T) {
+	f := loadTOML(t, `
+[tasks.spaced]
+cmd = "echo a {{msg}} b"
+[tasks.spaced.args.msg]
+required = true
+`)
+	args := f.L.NewTable()
+	args.RawSetString("msg", lua.LString("two words"))
+	out, err := runTOMLTask(t, f, "spaced", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// pwsh echoes each argument on its own line, bash keeps one line;
+	// what matters is the words arriving literally and in order.
+	ia, i1, i2, ib := strings.Index(out, "a "), strings.Index(out, "two"), strings.Index(out, "words"), strings.Index(out, " b")
+	if i1 < 0 || i2 < 0 {
+		t.Fatalf("output = %q, want the space-containing value inserted literally", out)
+	}
+	if !(i1 < i2) {
+		t.Errorf("output = %q, want words in value order", out)
+	}
+	if ia >= 0 && ib >= 0 && !(ia < i1 && i2 < ib) {
+		t.Errorf("output = %q, want the value between the literals", out)
+	}
+}
+
+func TestTOMLInterpolationNum(t *testing.T) {
+	f := loadTOML(t, `
+[tasks.serve]
+cmds = ["echo port={{port}}", "echo ratio={{ratio}}"]
+[tasks.serve.args.port]
+type = "num"
+required = true
+[tasks.serve.args.ratio]
+type = "num"
+`)
+	args := f.L.NewTable()
+	args.RawSetString("port", lua.LNumber(8080))
+	args.RawSetString("ratio", lua.LNumber(2.5))
+	out, err := runTOMLTask(t, f, "serve", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "port=8080") {
+		t.Errorf("output = %q, want shortest num form", out)
+	}
+	if strings.Contains(out, "8080.000000") {
+		t.Errorf("output = %q, num must not render with decimals", out)
+	}
+	if !strings.Contains(out, "ratio=2.5") {
+		t.Errorf("output = %q, want 2.5 rendered as given", out)
+	}
+}
+
+func TestTOMLBoolConditionalTrue(t *testing.T) {
+	f := loadTOML(t, `
+[tasks.push]
+cmd = "echo push{{force:+ --force}}"
+[tasks.push.args.force]
+type = "bool"
+`)
+	args := f.L.NewTable()
+	args.RawSetString("force", lua.LBool(true))
+	out, err := runTOMLTask(t, f, "push", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// pwsh echoes each argument on its own line; order still proves insertion.
+	ip, ifr := strings.Index(out, "push"), strings.Index(out, "--force")
+	if ip < 0 || ifr < 0 || !(ip < ifr) {
+		t.Errorf("output = %q, want conditional word inserted after the text", out)
+	}
+}
+
+func TestTOMLBoolConditionalFalseAndMissing(t *testing.T) {
+	f := loadTOML(t, `
+[tasks.push]
+cmd = "echo push{{force:+ --force}}"
+[tasks.push.args.force]
+type = "bool"
+`)
+	out, err := runTOMLTask(t, f, "push", f.L.NewTable()) // missing optional bool
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "push") || strings.Contains(out, "--force") {
+		t.Errorf("output = %q, want no insertion for a missing bool", out)
+	}
+	args := f.L.NewTable()
+	args.RawSetString("force", lua.LBool(false))
+	out, err = runTOMLTask(t, f, "push", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "push") || strings.Contains(out, "--force") {
+		t.Errorf("output = %q, want no insertion for false", out)
+	}
+}
+
+// --- prefix x interpolation (Review Focus 1 combos) ---
+
+func TestTOMLPrefixInterpolation(t *testing.T) {
+	mustShell(t, "bash")
+	f := loadTOML(t, `
+[tasks.pfx]
+cmd = "bash:echo via-{{name}}"
+[tasks.pfx.args.name]
+required = true
+`)
+	args := f.L.NewTable()
+	args.RawSetString("name", lua.LString("bash-toml"))
+	out, err := runTOMLTask(t, f, "pfx", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "via-bash-toml") {
+		t.Errorf("output = %q, want prefix + interpolated text in bash", out)
+	}
+}
+
+func TestTOMLPrefixConditional(t *testing.T) {
+	mustShell(t, "bash")
+	f := loadTOML(t, `
+[tasks.pfxc]
+cmd = "bash:echo flags{{force:+ --yes}}"
+[tasks.pfxc.args.force]
+type = "bool"
+`)
+	args := f.L.NewTable()
+	args.RawSetString("force", lua.LBool(true))
+	out, err := runTOMLTask(t, f, "pfxc", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "flags --yes") {
+		t.Errorf("output = %q, want conditional insertion under a prefix", out)
+	}
+}
+
+// TestTOMLRegistryPrefixInterpolation: a config-registered shell prefix
+// is not a builtin, so the load-time split leaves it in the command
+// text; the runtime re-splits the rendered string — same one-shot run.
+func TestTOMLRegistryPrefixInterpolation(t *testing.T) {
+	spec, err := shell.Resolve("bash", map[string]string{})
+	if err != nil {
+		t.Skipf("skipping: %v", err)
+	}
+	f := loadTOML(t, `
+[tasks.regpfx]
+cmd = "mysh:echo via-{{name}}"
+[tasks.regpfx.args.name]
+required = true
+`)
+	args := f.L.NewTable()
+	args.RawSetString("name", lua.LString("registry"))
+	var out bytes.Buffer
+	rerr := runtime.Run(adapter.NewChain(f), "regpfx", args, runtime.Options{
+		Stdout: &out, Stderr: &out, Stdin: os.Stdin,
+		Registry: map[string]string{"mysh": spec.Path},
+	})
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(out.String(), "via-registry") {
+		t.Errorf("output = %q, want interpolated text under a registry prefix", out.String())
+	}
+}
+
+// --- deps execution: order, recursion, error-stop, empty args ---
+
+func TestTOMLDepsOrder(t *testing.T) {
+	f := loadTOML(t, `
+[tasks.first]
+cmd = "echo dep-first"
+
+[tasks.second]
+cmd = "echo dep-second"
+
+[tasks.main]
+deps = ["first", "second"]
+cmd = "echo main-ran"
+`)
+	out, err := runTOMLTask(t, f, "main", f.L.NewTable())
+	if err != nil {
+		t.Fatal(err)
+	}
+	i1, i2, i3 := strings.Index(out, "dep-first"), strings.Index(out, "dep-second"), strings.Index(out, "main-ran")
+	if i1 < 0 || i2 < 0 || i3 < 0 {
+		t.Fatalf("output = %q, want all three markers", out)
+	}
+	if !(i1 < i2 && i2 < i3) {
+		t.Errorf("output = %q, deps must run in listed order before the body", out)
+	}
+}
+
+func TestTOMLDepsRecursive(t *testing.T) {
+	f := loadTOML(t, `
+[tasks.gen]
+cmd = "echo ran-gen"
+
+[tasks.build]
+deps = ["gen"]
+cmd = "echo ran-build"
+
+[tasks.release]
+deps = ["build"]
+cmd = "echo ran-release"
+`)
+	out, err := runTOMLTask(t, f, "release", f.L.NewTable())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ig, ib, ir := strings.Index(out, "ran-gen"), strings.Index(out, "ran-build"), strings.Index(out, "ran-release")
+	if ig < 0 || ib < 0 || ir < 0 {
+		t.Fatalf("output = %q, want gen/build/release all present", out)
+	}
+	if !(ig < ib && ib < ir) {
+		t.Errorf("output = %q, transitive deps must run innermost first", out)
+	}
+}
+
+func TestTOMLDepsErrorStops(t *testing.T) {
+	f := loadTOML(t, `
+[tasks.boom]
+cmd = "exit 3"
+
+[tasks.parent]
+deps = ["boom"]
+cmd = "echo parent-ran"
+`)
+	out, err := runTOMLTask(t, f, "parent", f.L.NewTable())
+	if err == nil {
+		t.Fatalf("expected the failing dep to error the task; output %q", out)
+	}
+	if strings.Contains(out, "parent-ran") {
+		t.Errorf("output = %q, body must not run after a dep fails", out)
+	}
+}
+
+func TestTOMLDepsGetEmptyArgs(t *testing.T) {
+	f := loadTOML(t, `
+[tasks.greeter]
+cmd = "echo greet=[{{opt}}]"
+[tasks.greeter.args.opt]
+desc = "optional greeting"
+
+[tasks.host]
+deps = ["greeter"]
+cmd = "echo host-ran"
+`)
+	out, err := runTOMLTask(t, f, "host", f.L.NewTable())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "greet=[]") {
+		t.Errorf("output = %q, want the dep's optional arg to render empty", out)
+	}
+	if !strings.Contains(out, "host-ran") {
+		t.Errorf("output = %q, want the host body to run", out)
 	}
 }
