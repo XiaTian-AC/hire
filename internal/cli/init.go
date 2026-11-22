@@ -10,12 +10,17 @@ import (
 	"hire/internal/config"
 )
 
-// initLangs maps --lang values to the generated file and its template.
-var initLangs = map[string]struct{ file, tmpl string }{
-	"lua":    {"Taskfile.lua", adapter.LuaTemplate},
-	"python": {"Taskfile.py", adapter.PythonTemplate},
-	"node":   {"Taskfile.js", adapter.NodeTemplate},
-	"cpp":    {"Taskfile.cpp", adapter.CppTemplate},
+// initFile is one generated file for a --lang value.
+type initFile struct{ file, tmpl string }
+
+// initLangs maps --lang values to the generated files. The cpp runtime
+// generates two: hire.hpp (the contract SDK) plus the taskfile that
+// includes it.
+var initLangs = map[string][]initFile{
+	"lua":    {{"Taskfile.lua", adapter.LuaTemplate}},
+	"python": {{"Taskfile.py", adapter.PythonTemplate}},
+	"node":   {{"Taskfile.js", adapter.NodeTemplate}},
+	"cpp":    {{"hire.hpp", adapter.CppHeaderTemplate}, {"Taskfile.cpp", adapter.CppTemplate}},
 }
 
 // cmdInit implements `hire init [--lang lua|python|node|cpp]`: write a
@@ -41,15 +46,20 @@ func cmdInit(argv []string, d Deps) int {
 		fmt.Fprintf(d.Stderr, "hire: unknown --lang %q (use: lua, python, node, cpp)\n", lang)
 		return 2
 	}
-	if fileExists(spec.file) {
-		fmt.Fprintf(d.Stderr, "hire: %s already exists; hire init does not overwrite\n", spec.file)
-		return 1
+	for _, f := range spec {
+		if fileExists(f.file) {
+			fmt.Fprintf(d.Stderr, "hire: %s already exists; hire init does not overwrite\n", f.file)
+			return 1
+		}
 	}
-	if err := os.WriteFile(spec.file, []byte(spec.tmpl), 0o644); err != nil {
-		fmt.Fprintf(d.Stderr, "hire: %v\n", err)
-		return 1
+	for _, f := range spec {
+		if err := os.WriteFile(f.file, []byte(f.tmpl), 0o644); err != nil {
+			fmt.Fprintf(d.Stderr, "hire: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(d.Stdout, "created %s\n", f.file)
 	}
-	fmt.Fprintf(d.Stdout, "created %s - try: hire hello\n", spec.file)
+	fmt.Fprintf(d.Stdout, "try: hire hello\n")
 	if lang != "lua" {
 		printRuntimeHint(lang, d)
 	}

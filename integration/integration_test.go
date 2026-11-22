@@ -551,6 +551,8 @@ func TestIntegrationCcExplicitTaskfile(t *testing.T) {
 		"return { runtimes = { cpp = { build = \"g++ -std=c++20 -O2 -o {out} {src}\" } } }")
 
 	work := t.TempDir()
+	// CppTemplate includes hire.hpp, so the SDK header must sit beside it.
+	writeTaskfile(work, "hire.hpp", adapter.CppHeaderTemplate)
 	writeTaskfile(work, "Taskfile.cc", adapter.CppTemplate)
 
 	// Auto-discovery probes only the fixed five: a lone .cc is invisible.

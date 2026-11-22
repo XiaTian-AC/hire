@@ -189,77 +189,292 @@ if (name !== "hello") {
 process.stdout.write("hello, " + (args.name || "hire") + "\n");
 ```
 
-### C++（Taskfile.cpp，编译型）
+### C++（Taskfile.cpp + hire.hpp，编译型）
+
+`hire init --lang cpp` 生成两个文件：`hire.hpp`（契约 SDK——`__hire__` 分发、discover JSON 输出、带转义处理的 `HIRE_ARGS` 解析全部收在头文件里）和只含任务本体的 `Taskfile.cpp`。手写单文件契约程序同样合法——头文件只是便利品，不引入任何私有机制。
 
 ```cpp
-// hire Taskfile.cpp - a taskfile is any program speaking the __hire__ contract.
+// hire.hpp - the hire contract SDK for C++ taskfiles.
 //
-// hire compiles this file once with the build template from config.lua
-// (cpp = { build = "g++ -std=c++20 -O2 -o {out} {src}" }), caches the
-// binary by source hash, then calls it:
-//   <built> __hire__ discover     -> print {"tasks": [...]} to stdout
-//   <built> __hire__ run <name>   -> run the task
-// Parsed CLI arguments arrive as JSON in the HIRE_ARGS environment variable:
-// {"name": "v2", "_": ["positional"]} - flags plus the "_" positional array,
-// {} when the task declares no args. Full contract: docs/contract.md.
+// Include it from Taskfile.cpp, register tasks, hand main() over:
 //
-// discover must stay pure: describe tasks, no side effects.
-
+//     #include "hire.hpp"
+//
+//     int main(int argc, char** argv) {
+//         hire::registry reg;
+//         reg.task("hello", "say hello")
+//            .arg("name", "string", false, "who to greet")
+//            .run([](const hire::args& a) {
+//                std::cout << "hello, " << a.get_string("name", "hire") << "\n";
+//            });
+//         return hire::main(reg, argc, argv);
+//     }
+//
+// hire calls your compiled program two ways:
+//   <built> __hire__ discover    -> print {"tasks": [...]} (must stay pure)
+//   <built> __hire__ run <name>  -> run one task; parsed flags arrive as JSON
+//                                  in the HIRE_ARGS env var. Full contract:
+//                                  docs/contract.md.
+#pragma once
 #include <cstdlib>
+#include <functional>
 #include <iostream>
+#include <map>
 #include <string>
+#include <utility>
+#include <vector>
 
-namespace {
+namespace hire {
 
-// extract_string_field pulls "key":"value" from a flat JSON object.
-// shortcut: no escape handling - fine for scaffold defaults; use a JSON
-// library once your tasks take arbitrary values.
-std::string extract_string_field(const std::string& json, const std::string& key) {
-    const std::string needle = "\"" + key + "\":\"";
-    const size_t start = json.find(needle);
-    if (start == std::string::npos) {
-        return "";
+// args is the parsed HIRE_ARGS JSON: string/bool flags plus the "_" array.
+class args {
+public:
+    std::string get_string(const std::string& key, const std::string& fallback = "") const {
+        std::map<std::string, std::string>::const_iterator it = raw_.find(key);
+        return it != raw_.end() ? it->second : fallback;
     }
-    const size_t value = start + needle.size();
-    const size_t end = json.find('"', value);
-    return end == std::string::npos ? "" : json.substr(value, end - value);
+    bool get_bool(const std::string& key, bool fallback = false) const {
+        std::map<std::string, std::string>::const_iterator it = raw_.find(key);
+        return it != raw_.end() ? it->second == "true" : fallback;
+    }
+    const std::vector<std::string>& positional() const { return pos_; }
+
+    static args parse(const std::string& json);
+
+private:
+    std::map<std::string, std::string> raw_;
+    std::vector<std::string> pos_;
+};
+
+// arg_spec mirrors one entry of the task's discover "args" object.
+struct arg_spec {
+    std::string type;     // "string" | "bool"
+    std::string desc;
+    bool required;
+};
+
+// task_def is one registered task; chain arg()/run() to fill it in.
+// (The specs member is arg_specs, not args: a member named args would
+// shadow the hire::args class inside this struct.)
+struct task_def {
+    std::string name;
+    std::string desc;
+    std::vector<std::pair<std::string, arg_spec> > arg_specs;  // declaration order
+    std::function<void(const args&)> body;
+
+    task_def& arg(std::string name, std::string type, bool required, std::string desc = "") {
+        arg_specs.push_back(std::make_pair(std::move(name), arg_spec{std::move(type), std::move(desc), required}));
+        return *this;
+    }
+    task_def& run(std::function<void(const args&)> fn) {
+        body = std::move(fn);
+        return *this;
+    }
+};
+
+// registry holds tasks in registration order (= discover order).
+class registry {
+public:
+    std::vector<task_def> tasks;
+
+    task_def& task(std::string name, std::string desc = "") {
+        task_def t;
+        t.name = std::move(name);
+        t.desc = std::move(desc);
+        tasks.push_back(std::move(t));
+        return tasks.back();
+    }
+};
+
+// json_str renders s as a quoted JSON string with escapes.
+inline std::string json_str(const std::string& s) {
+    std::string out = "\"";
+    for (size_t i = 0; i < s.size(); ++i) {
+        switch (s[i]) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\t': out += "\\t"; break;
+            case '\r': out += "\\r"; break;
+            default:   out += s[i];
+        }
+    }
+    return out + "\"";
 }
 
-std::string hire_args() {
-    const char* value = std::getenv("HIRE_ARGS");
-    return value == nullptr ? "{}" : value;
+// parse decodes hire's flat HIRE_ARGS object: string values with escapes,
+// true/false literals, and the "_" string array. Unknown shapes are
+// skipped, not fatal - hire already validated the args against the
+// discover schema before invoking the task.
+inline args args::parse(const std::string& json) {
+    args out;
+    const size_t n = json.size();
+    size_t i = 0;
+    // skip_ws and parse_string advance i through the flat object
+    // (lambdas, kept local: one parser, one place).
+    auto skip_ws = [&]() {
+        while (i < n && (json[i] == ' ' || json[i] == '\t' || json[i] == '\n' || json[i] == '\r')) {
+            ++i;
+        }
+    };
+    auto parse_string = [&]() -> std::string {
+        std::string v;
+        ++i;  // opening quote
+        while (i < n && json[i] != '"') {
+            if (json[i] == '\\' && i + 1 < n) {
+                const char c = json[++i];
+                ++i;
+                switch (c) {
+                    case 'n': v += '\n'; break;
+                    case 't': v += '\t'; break;
+                    case 'r': v += '\r'; break;
+                    default:  v += c;     // covers \" \\ \/ and any other
+                }
+            } else {
+                v += json[i++];
+            }
+        }
+        if (i < n) {
+            ++i;  // closing quote
+        }
+        return v;
+    };
+    skip_ws();
+    if (i >= n || json[i] != '{') {
+        return out;
+    }
+    ++i;
+    while (true) {
+        skip_ws();
+        if (i >= n || json[i] == '}') {
+            break;
+        }
+        if (json[i] == ',') {
+            ++i;
+            continue;
+        }
+        if (json[i] != '"') {
+            break;  // malformed; keep what we have
+        }
+        const std::string key = parse_string();
+        skip_ws();
+        if (i >= n || json[i] != ':') {
+            break;
+        }
+        ++i;
+        skip_ws();
+        if (i < n && json[i] == '"') {
+            const std::string v = parse_string();
+            if (key == "_") {
+                out.pos_.push_back(v);
+            } else {
+                out.raw_[key] = v;
+            }
+        } else if (i < n && json[i] == '[') {
+            ++i;  // the "_" positional array
+            while (true) {
+                skip_ws();
+                if (i >= n || json[i] == ']') {
+                    ++i;
+                    break;
+                }
+                if (json[i] == ',') {
+                    ++i;
+                    continue;
+                }
+                if (json[i] != '"') {
+                    ++i;
+                    continue;
+                }
+                out.pos_.push_back(parse_string());
+            }
+        } else {
+            const size_t start = i;
+            while (i < n && json[i] != ',' && json[i] != '}') {
+                ++i;
+            }
+            if (key != "_") {
+                out.raw_[key] = json.substr(start, i - start);  // true/false
+            }
+        }
+    }
+    return out;
 }
 
-void run_hello() {
-    const std::string who = extract_string_field(hire_args(), "name");
-    std::cout << "hello, " << (who.empty() ? "hire" : who) << "\n";
-}
-
-}  // namespace
-
-int main(int argc, char** argv) {
-    if (argc >= 3 && std::string(argv[1]) == "__hire__") {
-        const std::string action = argv[2];
-        if (action == "discover") {
-            std::cout << "{\"tasks\":[{"
-                      << "\"name\":\"hello\","
-                      << "\"desc\":\"say hello (edit me)\","
-                      << "\"args\":{\"name\":{"
-                      << "\"type\":\"string\",\"required\":false,"
-                      << "\"desc\":\"who to greet\"}}}]}";
+// main dispatches the __hire__ contract verbs for the registry.
+inline int main(registry& reg, int argc, char** argv) {
+    if (argc < 3 || std::string(argv[1]) != "__hire__") {
+        std::cerr << "usage: __hire__ discover | run <name>\n";
+        return 1;
+    }
+    const std::string action = argv[2];
+    if (action == "discover") {
+        std::cout << "{\"tasks\":[";
+        for (size_t t = 0; t < reg.tasks.size(); ++t) {
+            const task_def& task = reg.tasks[t];
+            std::cout << (t ? "," : "")
+                      << "{\"name\":" << json_str(task.name)
+                      << ",\"desc\":" << json_str(task.desc);
+            if (!task.arg_specs.empty()) {
+                std::cout << ",\"args\":{";
+                for (size_t a = 0; a < task.arg_specs.size(); ++a) {
+                    std::cout << (a ? "," : "")
+                              << json_str(task.arg_specs[a].first) << ":{"
+                              << "\"type\":" << json_str(task.arg_specs[a].second.type)
+                              << ",\"required\":" << (task.arg_specs[a].second.required ? "true" : "false")
+                              << ",\"desc\":" << json_str(task.arg_specs[a].second.desc)
+                              << "}";
+                }
+                std::cout << "}";
+            }
+            std::cout << "}";
+        }
+        std::cout << "]}\n";
+        return 0;
+    }
+    if (action == "run" && argc >= 4) {
+        const std::string name = argv[3];
+        for (size_t t = 0; t < reg.tasks.size(); ++t) {
+            if (reg.tasks[t].name != name) {
+                continue;
+            }
+            if (!reg.tasks[t].body) {
+                std::cerr << "hire: task " << name << " has no body\n";
+                return 1;
+            }
+            const char* env = std::getenv("HIRE_ARGS");
+            reg.tasks[t].body(args::parse(env != nullptr ? env : "{}"));
             return 0;
         }
-        if (action == "run" && argc >= 4) {
-            const std::string task = argv[3];
-            if (task == "hello") {
-                run_hello();
-                return 0;
-            }
-            std::cerr << "hire: unknown task " << task << "\n";
-            return 1;
-        }
+        std::cerr << "hire: unknown task " << name << "\n";
+        return 1;
     }
-    std::cerr << "usage: Taskfile.cpp __hire__ discover | run <name>\n";
+    std::cerr << "usage: __hire__ discover | run <name>\n";
     return 1;
+}
+
+}  // namespace hire
+```
+
+```cpp
+// hire Taskfile.cpp - with hire.hpp, the contract is one call away.
+// hire compiles this file once with the build template from config.lua
+// (cpp = { build = "g++ -std=c++20 -O2 -o {out} {src}" }), caches the
+// binary by source hash, then drives it with __hire__ discover / run.
+// Full contract: docs/contract.md.
+
+#include "hire.hpp"
+
+int main(int argc, char** argv) {
+    hire::registry reg;
+
+    // Your tasks: name, desc, typed args, then the body.
+    reg.task("hello", "say hello (edit me)")
+        .arg("name", "string", false, "who to greet")
+        .run([](const hire::args& a) {
+            std::cout << "hello, " << a.get_string("name", "hire") << "\n";
+        });
+
+    return hire::main(reg, argc, argv);
 }
 ```

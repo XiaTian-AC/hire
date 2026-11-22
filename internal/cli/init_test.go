@@ -112,10 +112,10 @@ func TestInitPythonScaffold(t *testing.T) {
 // All external-language templates generate without the toolchain
 // present, and each print the runtimes config hint.
 func TestInitGeneratesAllLangs(t *testing.T) {
-	for lang, file := range map[string]string{
-		"python": "Taskfile.py",
-		"node":   "Taskfile.js",
-		"cpp":    "Taskfile.cpp",
+	for lang, files := range map[string][]string{
+		"python": {"Taskfile.py"},
+		"node":   {"Taskfile.js"},
+		"cpp":    {"hire.hpp", "Taskfile.cpp"},
 	} {
 		t.Run(lang, func(t *testing.T) {
 			t.Chdir(t.TempDir())
@@ -124,8 +124,10 @@ func TestInitGeneratesAllLangs(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("init --lang %s: code=%d err=%q", lang, code, errOut.String())
 			}
-			if _, err := os.Stat(file); err != nil {
-				t.Fatalf("%s not created: %v", file, err)
+			for _, file := range files {
+				if _, err := os.Stat(file); err != nil {
+					t.Fatalf("%s not created: %v", file, err)
+				}
 			}
 			if !strings.Contains(errOut.String(), "runtimes") {
 				t.Errorf("init %s should print the runtimes config hint: err=%q", lang, errOut.String())
