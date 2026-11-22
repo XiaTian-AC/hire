@@ -103,7 +103,7 @@ func LoadExec(path string, spec RuntimeSpec, rtName string) (*File, error) {
 			}
 			if !validArgType(sp.Type) {
 				f.Close()
-				return nil, fmt.Errorf("%s: task %q: arg %q: invalid type %q (use \"string\" or \"bool\")", path, dt.Name, argName, sp.Type)
+				return nil, fmt.Errorf("%s: task %q: arg %q: invalid type %q (use \"string\", \"bool\" or \"num\")", path, dt.Name, argName, sp.Type)
 			}
 			task.Args[argName] = sp
 		}

@@ -43,6 +43,12 @@ func main() {
 	case "badtype":
 		fmt.Println(`{"tasks":[{"name":"t","args":{"n":{"type":"integer"}}}]}`)
 		return
+	case "numtype":
+		fmt.Println(`{"tasks":[{"name":"t","desc":"num arg","args":{"n":{"type":"num","required":false,"desc":"a number"}}}]}`)
+		return
+	case "floattype":
+		fmt.Println(`{"tasks":[{"name":"t","args":{"n":{"type":"float"}}}]}`)
+		return
 	}
 	switch {
 	case verb == "discover":

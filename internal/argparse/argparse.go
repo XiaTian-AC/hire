@@ -3,6 +3,7 @@ package argparse
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -52,6 +53,18 @@ func Parse(argv []string, specs map[string]Spec) (*Parsed, error) {
 				i += 2
 				continue
 			}
+			if hasSpec && sp.Type == "num" {
+				if i+1 >= len(argv) {
+					return nil, fmt.Errorf("flag --%s requires a value", body)
+				}
+				n, err := strconv.ParseFloat(argv[i+1], 64)
+				if err != nil {
+					return nil, fmt.Errorf("flag --%s: want num, got %q", body, argv[i+1])
+				}
+				p.Flags[body] = n
+				i += 2
+				continue
+			}
 			if !hasSpec && specs != nil {
 				allowed := make([]string, 0, len(specs))
 				for k := range specs {
@@ -91,6 +104,14 @@ func setFlag(p *Parsed, specs map[string]Spec, name, val string) error {
 		}
 		return nil
 	}
+	if hasSpec && sp.Type == "num" {
+		n, err := strconv.ParseFloat(val, 64)
+		if err != nil {
+			return fmt.Errorf("flag --%s: want num, got %q", name, val)
+		}
+		p.Flags[name] = n
+		return nil
+	}
 	p.Flags[name] = val
 	return nil
 }
@@ -117,6 +138,8 @@ func ToLuaTable(L *lua.LState, p *Parsed) *lua.LTable {
 			t.RawSetString(k, lua.LString(vv))
 		case bool:
 			t.RawSetString(k, lua.LBool(vv))
+		case float64:
+			t.RawSetString(k, lua.LNumber(vv))
 		}
 	}
 	pos := L.NewTable()

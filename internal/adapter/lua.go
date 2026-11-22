@@ -28,6 +28,7 @@ func LoadLua(path string) (*File, error) {
 	L.SetGlobal("task", L.NewFunction(luaTaskHelper))
 	L.SetGlobal("req", L.NewFunction(luaReqHelper))
 	L.SetGlobal("bool", L.NewFunction(luaBoolHelper))
+	L.SetGlobal("num", L.NewFunction(luaNumHelper))
 	before := snapshotGlobals(L)
 	if err := L.DoFile(path); err != nil {
 		L.Close()
@@ -244,7 +245,7 @@ func parseArgSpecs(at *lua.LTable, taskName, path string) (map[string]argparse.S
 		}
 		st, ok := v.(*lua.LTable)
 		if !ok {
-			failure = fmt.Errorf("%s: task %q: arg %q must be a table (req/bool sugar or {type=, required=, desc=})", path, taskName, string(name))
+			failure = fmt.Errorf("%s: task %q: arg %q must be a table (req/bool/num sugar or {type=, required=, desc=})", path, taskName, string(name))
 			return
 		}
 		// Spec fields are strict (Task 2+3 review M2): a wrong Lua type or
@@ -291,7 +292,7 @@ func parseArgSpecs(at *lua.LTable, taskName, path string) (map[string]argparse.S
 			failure = fmt.Errorf("%s: task %q: arg %q: unknown field %q (use type/required/desc)", path, taskName, string(name), unknown)
 		}
 		if failure == nil && !validArgType(sp.Type) {
-			failure = fmt.Errorf("%s: task %q: arg %q: invalid type %q (use \"string\" or \"bool\")", path, taskName, string(name), sp.Type)
+			failure = fmt.Errorf("%s: task %q: arg %q: invalid type %q (use \"string\", \"bool\" or \"num\")", path, taskName, string(name), sp.Type)
 		}
 		if failure != nil {
 			return
@@ -326,6 +327,15 @@ func luaReqHelper(L *lua.LState) int {
 func luaBoolHelper(L *lua.LState) int {
 	t := L.NewTable()
 	t.RawSetString("type", lua.LString("bool"))
+	t.RawSetString("required", lua.LFalse)
+	t.RawSetString("desc", lua.LString(L.OptString(1, "")))
+	L.Push(t)
+	return 1
+}
+
+func luaNumHelper(L *lua.LState) int {
+	t := L.NewTable()
+	t.RawSetString("type", lua.LString("num"))
 	t.RawSetString("required", lua.LFalse)
 	t.RawSetString("desc", lua.LString(L.OptString(1, "")))
 	L.Push(t)

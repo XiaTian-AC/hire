@@ -567,6 +567,45 @@ func TestIntegrationCcExplicitTaskfile(t *testing.T) {
 	}
 }
 
+// TestIntegrationCppNumArg: the SDK header's .num/get_num chain against
+// a real g++ build — `--port 8080` parses as num, crosses HIRE_ARGS as a
+// JSON number, and get_num returns it as a double; help labels the arg
+// num (裁决 7).
+func TestIntegrationCppNumArg(t *testing.T) {
+	bin := buildBinary(t)
+	cfgDir, _ := os.MkdirTemp("", "hire-cfg-")
+	dataDir, _ := os.MkdirTemp("", "hire-data-")
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	t.Setenv("XDG_DATA_HOME", dataDir)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	langCmd(t, "g++")
+	writeTaskfile(filepath.Join(cfgDir, "hire"), "config.lua",
+		"return { runtimes = { cpp = { build = \"g++ -std=c++20 -O2 -o {out} {src}\" } } }")
+
+	work := t.TempDir()
+	writeTaskfile(work, "hire.hpp", adapter.CppHeaderTemplate)
+	writeTaskfile(work, "Taskfile.cc", `#include "hire.hpp"
+
+void hire_main(hire::registry& reg) {
+    reg.task("serve", "echo the port")
+        .num("port", "listen port")
+        .run([](const hire::args& a) {
+            std::cout << "port=" << a.get_num("port", 0) << "\n";
+        });
+}
+`)
+
+	out, code := runBinOpt(t, bin, work, nil, "--taskfile", "Taskfile.cc", "help", "serve")
+	if code != 0 || !strings.Contains(out, "--port num") {
+		t.Fatalf("help serve: code=%d out=%q (want the num type label)", code, out)
+	}
+
+	out, code = runBinOpt(t, bin, work, nil, "--taskfile", "Taskfile.cc", "serve", "--port", "8080")
+	if code != 0 || !strings.Contains(out, "port=8080") {
+		t.Fatalf("serve --port 8080: code=%d out=%q", code, out)
+	}
+}
+
 // TestIntegrationBstartExternalLifecycle: an external-language task
 // walks the whole background lifecycle — bstart, ls-running, stop,
 // watch, clean — through the same bg machinery as native tasks.

@@ -55,21 +55,23 @@ release = task {
   args = {
     tag   = req "git tag",          -- 必填 string（糖）
     force = bool "force push",     -- bool 开关（糖）
+    port = num "listen port",      -- 可选 num（糖）
     limit = { desc = "并发数" },     -- 可选 string（全形式）
   },
   run = function(args) end,
 }
 ```
 
-全形式字段：`type`（`"string"` | `"bool"`，缺省 string）、`required`（bool，缺省 false）、
+全形式字段：`type`（`"string"` | `"bool"` | `"num"`，缺省 string）、`required`（bool，缺省 false）、
 `desc`。**字段类型严格**：`required = "true"`（字符串）或未知字段名在加载期报错，
-不会静默取默认值——与 TOML 适配器的严格性一致。
+不会静默取默认值——与 TOML 适配器的严格性一致。必填 num 走全形式
+`{ type = "num", required = true }`（糖只做可选）。
 
 ### 保留名
 
 - 任务名不得以 `__` 开头（保留给契约动词）
 - 参数名 `shell` 保留（`--shell` 选择 shell），声明即报错
-- 保留全局名 `x` / `shell` / `task` / `req` / `bool` 不能做任务名；
+- 保留全局名 `x` / `shell` / `task` / `req` / `bool` / `num` 不能做任务名；
   顶层 `shell = "pwsh"` 是默认 shell 声明，不是任务
 
 ## 3. `x` 全局（点调用）
@@ -164,12 +166,13 @@ eval "$(hire env-setup)"
 CLI 解析后的参数以**单参数** Lua table 传入任务函数：
 
 ```lua
--- CLI: hire release --tag v1.0 --force pos1 pos2
+-- CLI: hire release --tag v1.0 --force --port 8080 pos1 pos2
 release = task {
-  args = { tag = req "", force = bool "" },
+  args = { tag = req "", force = bool "", port = num "" },
   run = function(args)
     args.tag    -- "v1.0"   (string)
     args.force  -- true     (bool)
+    args.port   -- 8080     (number)
     args._      -- {"pos1", "pos2"}  (位置参数数组；无位置参数时为空表)
   end,
 }
@@ -177,6 +180,8 @@ release = task {
 
 - `type="string"`：`--x VALUE` 或 `--x=VALUE`；裸 `--x` 报错（需要值）
 - `type="bool"`：`--x` → true；`--x=true/false`；`--x value` 报错
+- `type="num"`：`--x VALUE` 或 `--x=VALUE`，按 float64 解析（int 自然兼容）；
+  非数字报错（want num）
 - 未声明的 flag 报错（严格校验，错误消息列出允许的参数）
 - `--` 之后所有 token 进 `args._`，即使长得像 flag
 - `hire <task> --help` 拦截于 argparse 之前，显示任务详情

@@ -34,7 +34,7 @@ Node、编译的 C++、甚至一个 shell 脚本。
 被调用得远比 run 频繁，不纯的 discover 会被日常列表操作意外引爆。
 
 discover JSON 字段：`tasks`（数组），每项 `name`（必填）、`desc`、`args`（对象，
-每个参数 `{ type: "string"|"bool", required: bool, desc: string }`，字段可省）。
+每个参数 `{ type: "string"|"bool"|"num", required: bool, desc: string }`，字段可省）。
 hire 忽略未知字段，所以契约可以向后生长。
 
 ## HIRE_ARGS 形状
@@ -45,7 +45,7 @@ hire 完成 argparse 后，把解析结果以 JSON 放进环境变量 `HIRE_ARGS
 {"tag":"v1","force":true,"_":["positional","args"]}
 ```
 
-- flags 按声明类型转换（string / bool）
+- flags 按声明类型转换（string / bool / num；num 是 JSON number）
 - `_` 是位置参数数组（`--` 之后的 token 也进这里）
 - **任务未声明 args 时，HIRE_ARGS = `{}`**——读取时对空对象要健壮
 
@@ -234,7 +234,7 @@ process.stdout.write("hello, " + (args.name || "hire") + "\n");
 
 namespace hire {
 
-// args is the parsed HIRE_ARGS JSON: string/bool flags plus the "_" array.
+// args is the parsed HIRE_ARGS JSON: string/bool/num flags plus the "_" array.
 class args {
 public:
     std::string get_string(const std::string& key, const std::string& fallback = "") const {
@@ -244,6 +244,10 @@ public:
     bool get_bool(const std::string& key, bool fallback = false) const {
         std::map<std::string, std::string>::const_iterator it = raw_.find(key);
         return it != raw_.end() ? it->second == "true" : fallback;
+    }
+    double get_num(const std::string& key, double fallback = 0.0) const {
+        std::map<std::string, std::string>::const_iterator it = raw_.find(key);
+        return it != raw_.end() ? std::atof(it->second.c_str()) : fallback;
     }
     const std::vector<std::string>& positional() const { return pos_; }
 
@@ -256,7 +260,7 @@ private:
 
 // arg_spec mirrors one entry of the task's discover "args" object.
 struct arg_spec {
-    std::string type;     // "string" | "bool"
+    std::string type;     // "string" | "bool" | "num"
     std::string desc;
     bool required;
 };
@@ -275,10 +279,12 @@ struct task_def {
         return *this;
     }
     // Sugar mirroring the Lua adapter: req = required string, opt =
-    // optional string, flag = optional bool; .arg stays for the rest.
+    // optional string, flag = optional bool, num = optional number;
+    // .arg stays for the rest (e.g. a required num).
     task_def& req(std::string name, std::string desc = "") { return arg(std::move(name), "string", true, std::move(desc)); }
     task_def& opt(std::string name, std::string desc = "") { return arg(std::move(name), "string", false, std::move(desc)); }
     task_def& flag(std::string name, std::string desc = "") { return arg(std::move(name), "bool", false, std::move(desc)); }
+    task_def& num(std::string name, std::string desc = "") { return arg(std::move(name), "num", false, std::move(desc)); }
     task_def& run(std::function<void(const args&)> fn) {
         body = std::move(fn);
         return *this;
@@ -316,7 +322,7 @@ inline std::string json_str(const std::string& s) {
 }
 
 // parse decodes hire's flat HIRE_ARGS object: string values with escapes,
-// true/false literals, and the "_" string array. Unknown shapes are
+// true/false/number literals, and the "_" string array. Unknown shapes are
 // skipped, not fatal - hire already validated the args against the
 // discover schema before invoking the task.
 inline args args::parse(const std::string& json) {
@@ -352,8 +358,7 @@ inline args args::parse(const std::string& json) {
         }
         return v;
     };
-    skip_ws();
-    if (i >= n || json[i] != '{') {
+    skip_ws();    if (i >= n || json[i] != '{') {
         return out;
     }
     ++i;
@@ -407,7 +412,7 @@ inline args args::parse(const std::string& json) {
                 ++i;
             }
             if (key != "_") {
-                out.raw_[key] = json.substr(start, i - start);  // true/false
+                out.raw_[key] = json.substr(start, i - start);  // true/false, numbers
             }
         }
     }

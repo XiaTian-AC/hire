@@ -180,6 +180,42 @@ func TestExecBadArgType(t *testing.T) {
 	}
 }
 
+// The discover schema passes a num arg through: validArgType accepts it
+// and the spec reaches the task intact (裁决 6).
+func TestExecNumArgType(t *testing.T) {
+	t.Setenv("FAKE_MODE", "numtype")
+	path := filepath.Join(t.TempDir(), "Taskfile.fake")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := adapter.LoadExec(path, adapter.RuntimeSpec{Cmd: fakeInterp()}, "fake")
+	if err != nil {
+		t.Fatalf("LoadExec with num arg: %v", err)
+	}
+	t.Cleanup(f.Close)
+	n := f.Tasks["t"].Args["n"]
+	if n.Type != "num" || n.Required || n.Desc != "a number" {
+		t.Errorf("t.Args[n] = %+v, want optional num", n)
+	}
+}
+
+func TestExecFloatArgType(t *testing.T) {
+	t.Setenv("FAKE_MODE", "floattype")
+	path := filepath.Join(t.TempDir(), "Taskfile.fake")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := adapter.LoadExec(path, adapter.RuntimeSpec{Cmd: fakeInterp()}, "fake")
+	if err == nil {
+		t.Fatal("expected error for type float in discover JSON")
+	}
+	for _, want := range []string{path, `task "t"`, `invalid type "float"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
 func TestExecReservedNames(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "Taskfile.fake")
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {

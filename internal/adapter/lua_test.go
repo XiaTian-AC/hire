@@ -187,7 +187,7 @@ func TestReservedArgShell(t *testing.T) {
 }
 
 func TestReservedGlobals(t *testing.T) {
-	for _, name := range []string{"x", "task", "req", "bool"} {
+	for _, name := range []string{"x", "task", "req", "bool", "num"} {
 		err := loadErr(t, name+` = "echo hi"`)
 		if !strings.Contains(err.Error(), "reserved") {
 			t.Errorf("%s: error should mention reserved: %v", name, err)
@@ -255,6 +255,32 @@ bar = "echo ok"
 // Args spec fields with wrong Lua types or unknown names are load-time
 // errors, not silently-defaulted values (Task 2+3 review M2; matches the
 // TOML adapter's Undecoded strictness).
+// The num sugar and the required full form both load; a bad type value
+// stays a load-time error.
+func TestNumArgForms(t *testing.T) {
+	f := loadSrc(t, `
+serve = task {
+  desc = "start the server",
+  args = {
+    port = num "listen port",
+    tries = { type = "num", required = true, desc = "retry count" },
+  },
+  run = function(args) end,
+}`)
+	task, ok := f.Tasks["serve"]
+	if !ok {
+		t.Fatal("serve task not found")
+	}
+	port := task.Args["port"]
+	if port.Type != "num" || port.Required || port.Desc != "listen port" {
+		t.Errorf("port spec = %+v, want optional num with desc", port)
+	}
+	tries := task.Args["tries"]
+	if tries.Type != "num" || !tries.Required || tries.Desc != "retry count" {
+		t.Errorf("tries spec = %+v, want required num full form", tries)
+	}
+}
+
 func TestArgSpecStrict(t *testing.T) {
 	for _, tc := range []struct{ src, want string }{
 		{`bad = task { args = { tag = { required = "true" } }, run = function() end }`, "'required'"},
@@ -264,6 +290,7 @@ func TestArgSpecStrict(t *testing.T) {
 		// M1: argparse treats any non-bool type as string, so a bad type
 		// value must be a load-time error, never a silent default.
 		{`bad = task { args = { tag = { type = "integer" } }, run = function() end }`, `invalid type "integer"`},
+		{`bad = task { args = { tag = { type = "float" } }, run = function() end }`, `invalid type "float"`},
 	} {
 		err := loadErr(t, tc.src)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -352,7 +379,8 @@ func TestSugarHelpers(t *testing.T) {
 	defer L.Close()
 	L.SetGlobal("req", L.NewFunction(luaReqHelper))
 	L.SetGlobal("bool", L.NewFunction(luaBoolHelper))
-	if err := L.DoString(`return req "the desc", bool "other desc"`); err != nil {
+	L.SetGlobal("num", L.NewFunction(luaNumHelper))
+	if err := L.DoString(`return req "the desc", bool "other desc", num "port number"`); err != nil {
 		t.Fatal(err)
 	}
 	req := L.Get(1).(*lua.LTable)
@@ -366,5 +394,11 @@ func TestSugarHelpers(t *testing.T) {
 		b.RawGetString("required") != lua.LFalse ||
 		b.RawGetString("desc") != lua.LString("other desc") {
 		t.Errorf("bool spec = %+v", b)
+	}
+	n := L.Get(3).(*lua.LTable)
+	if n.RawGetString("type") != lua.LString("num") ||
+		n.RawGetString("required") != lua.LFalse ||
+		n.RawGetString("desc") != lua.LString("port number") {
+		t.Errorf("num spec = %+v", n)
 	}
 }

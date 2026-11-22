@@ -172,7 +172,7 @@ const CppHeaderTemplate = `// hire.hpp - the hire contract SDK for C++ taskfiles
 
 namespace hire {
 
-// args is the parsed HIRE_ARGS JSON: string/bool flags plus the "_" array.
+// args is the parsed HIRE_ARGS JSON: string/bool/num flags plus the "_" array.
 class args {
 public:
     std::string get_string(const std::string& key, const std::string& fallback = "") const {
@@ -182,6 +182,10 @@ public:
     bool get_bool(const std::string& key, bool fallback = false) const {
         std::map<std::string, std::string>::const_iterator it = raw_.find(key);
         return it != raw_.end() ? it->second == "true" : fallback;
+    }
+    double get_num(const std::string& key, double fallback = 0.0) const {
+        std::map<std::string, std::string>::const_iterator it = raw_.find(key);
+        return it != raw_.end() ? std::atof(it->second.c_str()) : fallback;
     }
     const std::vector<std::string>& positional() const { return pos_; }
 
@@ -194,7 +198,7 @@ private:
 
 // arg_spec mirrors one entry of the task's discover "args" object.
 struct arg_spec {
-    std::string type;     // "string" | "bool"
+    std::string type;     // "string" | "bool" | "num"
     std::string desc;
     bool required;
 };
@@ -213,10 +217,12 @@ struct task_def {
         return *this;
     }
     // Sugar mirroring the Lua adapter: req = required string, opt =
-    // optional string, flag = optional bool; .arg stays for the rest.
+    // optional string, flag = optional bool, num = optional number;
+    // .arg stays for the rest (e.g. a required num).
     task_def& req(std::string name, std::string desc = "") { return arg(std::move(name), "string", true, std::move(desc)); }
     task_def& opt(std::string name, std::string desc = "") { return arg(std::move(name), "string", false, std::move(desc)); }
     task_def& flag(std::string name, std::string desc = "") { return arg(std::move(name), "bool", false, std::move(desc)); }
+    task_def& num(std::string name, std::string desc = "") { return arg(std::move(name), "num", false, std::move(desc)); }
     task_def& run(std::function<void(const args&)> fn) {
         body = std::move(fn);
         return *this;
@@ -254,7 +260,7 @@ inline std::string json_str(const std::string& s) {
 }
 
 // parse decodes hire's flat HIRE_ARGS object: string values with escapes,
-// true/false literals, and the "_" string array. Unknown shapes are
+// true/false/number literals, and the "_" string array. Unknown shapes are
 // skipped, not fatal - hire already validated the args against the
 // discover schema before invoking the task.
 inline args args::parse(const std::string& json) {
@@ -344,7 +350,7 @@ inline args args::parse(const std::string& json) {
                 ++i;
             }
             if (key != "_") {
-                out.raw_[key] = json.substr(start, i - start);  // true/false
+                out.raw_[key] = json.substr(start, i - start);  // true/false, numbers
             }
         }
     }

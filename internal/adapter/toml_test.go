@@ -195,6 +195,44 @@ type = "integer"
 	}
 }
 
+func TestTOMLNumArgType(t *testing.T) {
+	f := loadTOML(t, `
+[tasks.serve]
+cmd = "echo ok"
+[tasks.serve.args.port]
+type = "num"
+desc = "listen port"
+[tasks.serve.args.tries]
+type = "num"
+required = true
+`)
+	port := f.Tasks["serve"].Args["port"]
+	if port.Type != "num" || port.Required || port.Desc != "listen port" {
+		t.Errorf("port spec = %+v, want optional num", port)
+	}
+	tries := f.Tasks["serve"].Args["tries"]
+	if tries.Type != "num" || !tries.Required {
+		t.Errorf("tries spec = %+v, want required num", tries)
+	}
+}
+
+func TestTOMLFloatArgTypeRejected(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.serve]
+cmd = "echo ok"
+[tasks.serve.args.port]
+type = "float"
+`)
+	if err == nil {
+		t.Fatal("expected load error for type = float")
+	}
+	for _, want := range []string{"serve", "port", `invalid type "float"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
 func TestTOMLWhen(t *testing.T) {
 	f := loadTOML(t, fmt.Sprintf(`
 [tasks.here]
@@ -236,7 +274,7 @@ cmd = "go build ."
 }
 
 func TestTOMLReservedNames(t *testing.T) {
-	for _, name := range []string{"__dunder", "x", "shell", "task", "req", "bool"} {
+	for _, name := range []string{"__dunder", "x", "shell", "task", "req", "bool", "num"} {
 		err := loadTOMLErr(t, fmt.Sprintf(`
 [tasks.%s]
 cmd = "echo hi"

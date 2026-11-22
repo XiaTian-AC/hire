@@ -119,6 +119,72 @@ func TestParseRequiredMissing(t *testing.T) {
 	}
 }
 
+func TestParseStrictNumFlag(t *testing.T) {
+	specs := map[string]Spec{"port": {Type: "num"}}
+	p, err := Parse([]string{"--port", "8080"}, specs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := p.Flags["port"].(float64); !ok || got != 8080 {
+		t.Errorf("port = %v (%T), want float64 8080", p.Flags["port"], p.Flags["port"])
+	}
+}
+
+func TestParseStrictNumFlagEquals(t *testing.T) {
+	specs := map[string]Spec{"port": {Type: "num"}}
+	p, err := Parse([]string{"--port=8080.5"}, specs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := p.Flags["port"].(float64); !ok || got != 8080.5 {
+		t.Errorf("port = %v (%T), want float64 8080.5", p.Flags["port"], p.Flags["port"])
+	}
+}
+
+func TestParseStrictNumFlagInvalid(t *testing.T) {
+	specs := map[string]Spec{"port": {Type: "num", Desc: "listen port"}}
+	_, err := Parse([]string{"--port", "abc"}, specs)
+	if err == nil || !strings.Contains(err.Error(), "want num") || !strings.Contains(err.Error(), "port") {
+		t.Errorf("expected 'want num' error naming the flag, got %v", err)
+	}
+	_, err = Parse([]string{"--port=abc"}, specs)
+	if err == nil || !strings.Contains(err.Error(), "want num") {
+		t.Errorf("equals form should fail the same way, got %v", err)
+	}
+}
+
+func TestParseStrictNumFlagMissingValue(t *testing.T) {
+	specs := map[string]Spec{"port": {Type: "num"}}
+	_, err := Parse([]string{"--port"}, specs)
+	if err == nil || !strings.Contains(err.Error(), "requires a value") {
+		t.Errorf("expected 'requires a value' error, got %v", err)
+	}
+}
+
+func TestParseNumRequiredMissing(t *testing.T) {
+	specs := map[string]Spec{"port": {Type: "num", Required: true, Desc: "listen port"}}
+	_, err := Parse([]string{}, specs)
+	if err == nil || !strings.Contains(err.Error(), "missing required") {
+		t.Errorf("expected 'missing required' error, got %v", err)
+	}
+}
+
+func TestToLuaTableNum(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+	p := &Parsed{Flags: map[string]any{"port": 8080.0}}
+	tbl := ToLuaTable(L, p)
+	if got, ok := tbl.RawGetString("port").(lua.LNumber); !ok || float64(got) != 8080 {
+		t.Errorf("port = %v (%T), want lua.LNumber 8080", tbl.RawGetString("port"), tbl.RawGetString("port"))
+	}
+	// The Lua-side view the brief pins: numbers must arrive as number,
+	// not as a stringified value.
+	L.SetGlobal("args", tbl)
+	if err := L.DoString(`if type(args.port) ~= "number" then error("port is " .. type(args.port)) end`); err != nil {
+		t.Errorf("Lua-side type check: %v", err)
+	}
+}
+
 func TestToLuaTable(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
