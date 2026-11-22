@@ -137,7 +137,7 @@ func TestRuntimesConfig(t *testing.T) {
   runtimes = {
     python = "python3",
     node   = "node",
-    cpp    = { build = "g++ -std=c++20 -O2 -o {out} {src}" },
+    cpp    = { build = "g++ -std=c++20 -O2 -o {out} {src}", parser = "clang++" },
   },
 }`
 	if err := os.WriteFile(filepath.Join(dir, "config.lua"), []byte(content), 0o644); err != nil {
@@ -153,8 +153,8 @@ func TestRuntimesConfig(t *testing.T) {
 	if !reflect.DeepEqual(rts["node"], adapter.RuntimeSpec{Cmd: "node"}) {
 		t.Errorf(`rts["node"] = %+v`, rts["node"])
 	}
-	if !reflect.DeepEqual(rts["cpp"], adapter.RuntimeSpec{Build: "g++ -std=c++20 -O2 -o {out} {src}"}) {
-		t.Errorf(`rts["cpp"] = %+v`, rts["cpp"])
+	if !reflect.DeepEqual(rts["cpp"], adapter.RuntimeSpec{Build: "g++ -std=c++20 -O2 -o {out} {src}", Parser: "clang++"}) {
+		t.Errorf(`rts["cpp"] = %+v, want the parser key carried through`, rts["cpp"])
 	}
 	if len(rts) != 3 {
 		t.Errorf("len(rts) = %d, want 3", len(rts))
@@ -226,6 +226,7 @@ func TestRuntimesConfigInvalid(t *testing.T) {
 		`return { runtimes = { cpp = { ext = ".cc" } } }`,        // ext without cmd or build
 		`return { runtimes = { ts = { cmd = "x", ext = 5 } } }`,   // ext not a string
 		`return { runtimes = { ts = { cmd = "x", ext = {5} } } }`, // ext array entry not a string
+		`return { runtimes = { cpp = { build = "x", parser = 5 } } }`, // parser not a string
 		`return { runtimes = "x" }`,                              // runtimes not a table
 		`this is not lua!!!`,                                     // syntax error
 	}

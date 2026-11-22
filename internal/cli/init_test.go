@@ -252,13 +252,46 @@ func TestContractPythonListings(t *testing.T) {
 	}
 }
 
+// TestContractCppListings pins the C++ byte-identity rule: the
+// function-form Taskfile.cpp (the init scaffold) and the legacy
+// hire.hpp SDK must reprint the templates.go constants verbatim.
+func TestContractCppListings(t *testing.T) {
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Skip("go.mod not found; running outside the module")
+		}
+		dir = parent
+	}
+	doc, err := os.ReadFile(filepath.Join(dir, "docs", "contract.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized := strings.ReplaceAll(string(doc), "\r\n", "\n")
+	for _, tmpl := range []struct{ name, body string }{
+		{"CppTemplate", adapter.CppTemplate},
+		{"CppHeaderTemplate", adapter.CppHeaderTemplate},
+	} {
+		if !strings.Contains(normalized, tmpl.body) {
+			t.Errorf("docs/contract.md must reprint %s verbatim (starting %q)", tmpl.name, strings.SplitN(tmpl.body, "\n", 2)[0])
+		}
+	}
+}
+
 // All external-language templates generate without the toolchain
 // present, and each print the runtimes config hint.
 func TestInitGeneratesAllLangs(t *testing.T) {
 	for lang, files := range map[string][]string{
 		"python": {"hire.py", "Taskfile.py"},
 		"node":   {"Taskfile.js"},
-		"cpp":    {"hire.hpp", "Taskfile.cpp"},
+		"cpp":    {"Taskfile.cpp"},
 	} {
 		t.Run(lang, func(t *testing.T) {
 			t.Chdir(t.TempDir())
@@ -272,8 +305,17 @@ func TestInitGeneratesAllLangs(t *testing.T) {
 					t.Fatalf("%s not created: %v", file, err)
 				}
 			}
+			// Function-form C++ taskfiles are parsed with clang++ - the
+			// hint must say so (and the generated file must not exist as
+			// hire.hpp: the hpp form is documented legacy, not scaffolded).
+			if _, err := os.Stat("hire.hpp"); lang == "cpp" && err == nil {
+				t.Error("init --lang cpp must not scaffold hire.hpp (legacy form)")
+			}
 			if !strings.Contains(errOut.String(), "runtimes") {
 				t.Errorf("init %s should print the runtimes config hint: err=%q", lang, errOut.String())
+			}
+			if lang == "cpp" && !strings.Contains(errOut.String(), "clang++") {
+				t.Errorf("cpp hint should mention clang++: err=%q", errOut.String())
 			}
 		})
 	}
@@ -301,32 +343,32 @@ func TestInitRefusesOverwrite(t *testing.T) {
 	}
 }
 
-// A stale sibling does not block the missing file: hire.hpp present,
-// Taskfile.cpp absent - init creates only the missing one.
+// A stale sibling does not block the missing file: hire.py present,
+// Taskfile.py absent - init creates only the missing one.
 func TestInitPartialExists(t *testing.T) {
 	t.Chdir(t.TempDir())
 	d, out, errOut := setupEnv(t, "")
-	const staleHeader = "// old header"
-	if err := os.WriteFile("hire.hpp", []byte(staleHeader), 0o644); err != nil {
+	const staleSDK = "# old SDK module\n"
+	if err := os.WriteFile("hire.py", []byte(staleSDK), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	code := Run([]string{"init", "--lang", "cpp"}, d)
+	code := Run([]string{"init", "--lang", "python"}, d)
 	if code != 0 {
-		t.Fatalf("init --lang cpp with existing hire.hpp: code=%d err=%q", code, errOut.String())
+		t.Fatalf("init --lang python with existing hire.py: code=%d err=%q", code, errOut.String())
 	}
 	if !strings.Contains(errOut.String(), "already exists; keeping it") {
 		t.Errorf("kept note missing: %q", errOut.String())
 	}
-	if !strings.Contains(out.String(), "created Taskfile.cpp") {
+	if !strings.Contains(out.String(), "created Taskfile.py") {
 		t.Errorf("created note missing: %q", out.String())
 	}
-	got, err := os.ReadFile("hire.hpp")
-	if err != nil || string(got) != staleHeader {
-		t.Errorf("existing hire.hpp must be untouched: %q (err=%v)", string(got), err)
+	got, err := os.ReadFile("hire.py")
+	if err != nil || string(got) != staleSDK {
+		t.Errorf("existing hire.py must be untouched: %q (err=%v)", string(got), err)
 	}
-	if _, err := os.Stat("Taskfile.cpp"); err != nil {
-		t.Fatalf("Taskfile.cpp not created: %v", err)
+	if _, err := os.Stat("Taskfile.py"); err != nil {
+		t.Fatalf("Taskfile.py not created: %v", err)
 	}
 }
 

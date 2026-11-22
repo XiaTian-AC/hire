@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -51,6 +52,15 @@ func LoadExec(path string, spec RuntimeSpec, rtName string) (*File, error) {
 	case prog != "":
 		extra = []string{path}
 	case spec.Build != "":
+		// C++ dual-form fork (spec §4): a .cpp/.cc that does not carry
+		// the contract markers is the function form and goes through
+		// the clang-parsed wrapper pipeline; contract-form files keep
+		// the raw path below.
+		if e := strings.ToLower(filepath.Ext(path)); e == ".cpp" || e == ".cc" {
+			if src, rerr := os.ReadFile(path); rerr == nil && !isContractForm(src) {
+				return loadCppFuncForm(path, rtName, spec, src)
+			}
+		}
 		exe, err := ensureCompiled(path, rtName, spec)
 		if err != nil {
 			return nil, err
@@ -68,11 +78,26 @@ func LoadExec(path string, spec RuntimeSpec, rtName string) (*File, error) {
 		}
 		return nil, fmt.Errorf("%s: __hire__ discover: %v", path, err)
 	}
+	return fileFromDiscoverJSON(path, stdout, stderr, prog, extra)
+}
+
+// fileFromDiscoverJSON turns one __hire__ discover payload into a File.
+// The function-form path feeds it the built exe and either a freshly
+// run discover or the cached <key>.tasks.json payload — both go through
+// the same validation, so a stale or tampered cache can never smuggle a
+// bad schema.
+func fileFromDiscoverJSON(path string, stdout []byte, stderr, prog string, extra []string) (*File, error) {
 	var dj discoverJSON
 	if jerr := json.Unmarshal(stdout, &dj); jerr != nil {
 		return nil, discoverErr(path, fmt.Sprintf("invalid discover JSON: %v", jerr), stderr)
 	}
+	return fileFromDiscover(path, &dj, prog, extra)
+}
 
+// fileFromDiscover builds the File from a parsed discover payload: task
+// guards (reserved names, duplicates), per-task argparse specs from the
+// args schema, and the per-task re-exec Fn.
+func fileFromDiscover(path string, dj *discoverJSON, prog string, extra []string) (*File, error) {
 	L := lua.NewState()
 	f := &File{L: L, Tasks: make(map[string]*Task)}
 	for _, dt := range dj.Tasks {

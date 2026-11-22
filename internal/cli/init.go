@@ -13,14 +13,15 @@ import (
 // initFile is one generated file for a --lang value.
 type initFile struct{ file, tmpl string }
 
-// initLangs maps --lang values to the generated files. The python and
-// cpp runtimes generate two: the contract SDK (hire.py / hire.hpp)
-// plus the taskfile that imports or includes it.
+// initLangs maps --lang values to the generated files. The python
+// runtime generates two (the contract SDK hire.py plus the taskfile);
+// cpp generates only the function-form Taskfile.cpp — the hire.hpp
+// legacy form is documented in docs/contract.md, not scaffolded.
 var initLangs = map[string][]initFile{
 	"lua":    {{"Taskfile.lua", adapter.LuaTemplate}},
 	"python": {{"hire.py", adapter.PythonSDKTemplate}, {"Taskfile.py", adapter.PythonTemplate}},
 	"node":   {{"Taskfile.js", adapter.NodeTemplate}},
-	"cpp":    {{"hire.hpp", adapter.CppHeaderTemplate}, {"Taskfile.cpp", adapter.CppTemplate}},
+	"cpp":    {{"Taskfile.cpp", adapter.CppTemplate}},
 }
 
 // cmdInit implements `hire init [--lang lua|python|node|cpp]`: write a
@@ -92,8 +93,11 @@ func printRuntimeHint(lang string, d Deps) {
 	case "node":
 		snippet = "node   = \"node\","
 	case "cpp":
-		snippet = "cpp    = { build = \"g++ -std=c++20 -O2 -o {out} {src}\" },"
+		snippet = "cpp    = { build = \"g++ -std=c++20 -O2 -o {out} {src}\", parser = \"clang++\" },"
 	}
 	fmt.Fprintf(d.Stderr, "hire: note: preset runtimes work out of the box; to override, add runtimes to %s\n  return {\n    runtimes = {\n      %s\n    },\n  }\n",
 		filepath.Join(cfgDir, "config.lua"), snippet)
+	if lang == "cpp" {
+		fmt.Fprintf(d.Stderr, "hire: note: cpp taskfiles parse with clang++ (hire probes PATH for clang++ then clang; the parser key above overrides)\n")
+	}
 }

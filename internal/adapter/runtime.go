@@ -18,11 +18,14 @@ import (
 // for interpreted languages (the taskfile is an argument to the command),
 // Build for compiled ones (a shell template with {out}/{src} placeholders
 // producing the program to run); Ext optionally declares extra taskfile
-// extensions the runtime owns beyond the builtin map (e.g. {".ts"}).
+// extensions the runtime owns beyond the builtin map (e.g. {".ts"});
+// Parser names the clang command used to parse function-form C++
+// taskfiles (e.g. "clang++"; empty = probe clang++ then clang on PATH).
 type RuntimeSpec struct {
-	Cmd   string   // e.g. "python3"
-	Build string   // e.g. "g++ -std=c++20 -O2 -o {out} {src}"
-	Ext   []string // e.g. {".ts"} — lowercased, leading dot
+	Cmd    string   // e.g. "python3"
+	Build  string   // e.g. "g++ -std=c++20 -O2 -o {out} {src}"
+	Ext    []string // e.g. {".ts"} — lowercased, leading dot
+	Parser string   // e.g. "clang++" — C++ function-form AST parser
 }
 
 // extRuntimes maps taskfile extensions to runtime names. .mjs, .ts and
@@ -130,8 +133,6 @@ func cacheBaseDir() (string, error) {
 // ensureCompiled returns the built taskfile program, running the build
 // template through the user's default shell on a cache miss. Compile
 // failures carry the compiler's full output.
-// shortcut: the cache is never pruned (disk grows with distinct source
-// contents + build strings); add a `hire cache clean` when it matters.
 func ensureCompiled(path, rtName string, spec RuntimeSpec) (string, error) {
 	src, err := os.ReadFile(path)
 	if err != nil {
@@ -142,31 +143,41 @@ func ensureCompiled(path, rtName string, spec RuntimeSpec) (string, error) {
 		return "", err
 	}
 	exe := filepath.Join(base, "hire", rtName, cacheKey(src, spec.Build)+".exe")
-	if st, err := os.Stat(exe); err == nil && !st.IsDir() {
-		return exe, nil
+	return buildIfMissing(exe, path, spec.Build, path)
+}
+
+// buildIfMissing stats exePath and, on a miss, runs the build template
+// through the user's default shell. srcForCmd is the {src} argument —
+// the user's taskfile on the raw contract path, hire's generated wrapper
+// for the C++ function form; displayPath names the taskfile in errors.
+// shortcut: the cache is never pruned (disk grows with distinct source
+// contents + build strings); add a `hire cache clean` when it matters.
+func buildIfMissing(exePath, srcForCmd, build, displayPath string) (string, error) {
+	if st, err := os.Stat(exePath); err == nil && !st.IsDir() {
+		return exePath, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(exePath), 0o755); err != nil {
 		return "", err
 	}
 	sh, err := shell.Resolve("", nil)
 	if err != nil {
-		return "", fmt.Errorf("%s: build: %v", path, err)
+		return "", fmt.Errorf("%s: build: %v", displayPath, err)
 	}
-	cmdStr := expandBuild(spec.Build, exe, path)
-	build := exec.Command(sh.Path, sh.Argv(cmdStr)...)
+	cmdStr := expandBuild(build, exePath, srcForCmd)
+	buildCmd := exec.Command(sh.Path, sh.Argv(cmdStr)...)
 	var out bytes.Buffer
-	build.Stdout = &out
-	build.Stderr = &out
-	if err := build.Run(); err != nil {
+	buildCmd.Stdout = &out
+	buildCmd.Stderr = &out
+	if err := buildCmd.Run(); err != nil {
 		// A possibly-created partial exe must not become a cache hit:
 		// the next load would silently execute the corrupt binary.
-		_ = os.Remove(exe)
-		return "", fmt.Errorf("%s: build failed: %v\ncommand: %s\n%s", path, err, cmdStr, strings.TrimSpace(out.String()))
+		_ = os.Remove(exePath)
+		return "", fmt.Errorf("%s: build failed: %v\ncommand: %s\n%s", displayPath, err, cmdStr, strings.TrimSpace(out.String()))
 	}
-	if _, err := os.Stat(exe); err != nil {
-		return "", fmt.Errorf("%s: build command did not produce the output file\ncommand: %s\n%s", path, cmdStr, strings.TrimSpace(out.String()))
+	if _, err := os.Stat(exePath); err != nil {
+		return "", fmt.Errorf("%s: build command did not produce the output file\ncommand: %s\n%s", displayPath, cmdStr, strings.TrimSpace(out.String()))
 	}
-	return exe, nil
+	return exePath, nil
 }
 
 // expandBuild substitutes {out}/{src} with double-quoted paths so

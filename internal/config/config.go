@@ -196,6 +196,14 @@ func Runtimes(dir string) (map[string]adapter.RuntimeSpec, error) {
 			if s, ok := sv.RawGetString("build").(lua.LString); ok {
 				spec.Build = string(s)
 			}
+			if pv := sv.RawGetString("parser"); pv != lua.LNil {
+				s, ok := pv.(lua.LString)
+				if !ok {
+					failure = fmt.Errorf("config.lua: runtimes.%s: parser must be a string (the clang command for C++ function-form taskfiles)", string(name))
+					return
+				}
+				spec.Parser = string(s)
+			}
 			if spec.Cmd == "" && spec.Build == "" {
 				failure = fmt.Errorf("config.lua: runtimes.%s: table form needs cmd = \"...\" (interpreted) or build = \"...\" (compiled)", string(name))
 				return
