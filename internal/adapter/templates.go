@@ -81,23 +81,24 @@ import sys
 _registry = {}
 
 
-def opt(name, desc=""):
-    """An optional string argument."""
+def opt(desc=""):
+    """An optional string argument. The dict key in args={} is the name."""
     return {"type": "string", "required": False, "desc": desc}
 
 
-def req(name, desc=""):
-    """A required string argument."""
+def req(desc=""):
+    """A required string argument. The dict key in args={} is the name."""
     return {"type": "string", "required": True, "desc": desc}
 
 
-def flag(name, desc=""):
-    """An optional bool argument."""
+def flag(desc=""):
+    """An optional bool argument. The dict key in args={} is the name."""
     return {"type": "bool", "required": False, "desc": desc}
 
 
-def num(name, desc=""):
-    """An optional number argument (an Args attribute is a float)."""
+def num(desc=""):
+    """An optional number argument (an Args attribute is a float). The
+    dict key in args={} is the name."""
     return {"type": "num", "required": False, "desc": desc}
 
 

@@ -179,6 +179,11 @@ if __name__ == "__main__":
 	if want := []string{"zebra", "alpha", "probe"}; !slices.Equal(names, want) {
 		t.Fatalf("discover order = %v, want %v", names, want)
 	}
+	// The helper's single parameter is the arg desc: it must survive the
+	// round trip into the discover schema (a dead param dropped it once).
+	if !strings.Contains(buf.String(), `"desc": "who to greet"`) || !strings.Contains(buf.String(), `"desc": "listen port"`) {
+		t.Fatalf("arg desc missing from discover JSON: %s", buf.String())
+	}
 
 	// Each declared form through the full argparse -> HIRE_ARGS -> Args
 	// path; a wrong shape exits nonzero, so exit 0 pins the contract.
