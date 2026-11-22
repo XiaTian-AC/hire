@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -76,7 +77,7 @@ func TestResolveRuntime(t *testing.T) {
 		if name != c.name {
 			t.Errorf("ResolveRuntime(%q) name = %q, want %q", c.ext, name, c.name)
 		}
-		if spec != rts[c.name] {
+		if !reflect.DeepEqual(spec, rts[c.name]) {
 			t.Errorf("ResolveRuntime(%q) spec = %+v, want %+v", c.ext, spec, rts[c.name])
 		}
 	}
@@ -93,16 +94,40 @@ func TestResolveRuntime(t *testing.T) {
 		}
 	}
 
-	// Known extension, runtime not configured.
+	// Builtin name missing from the registry: the preset default fills
+	// in, so python works even with an empty entry set.
 	noPython := map[string]adapter.RuntimeSpec{"node": {Cmd: "node"}, "cpp": {Build: "x"}}
-	_, _, err = adapter.ResolveRuntime(".py", noPython)
-	if err == nil {
-		t.Fatal("expected error for unconfigured runtime")
+	dspec, dname, derr := adapter.ResolveRuntime(".py", noPython)
+	if derr != nil || dname != "python" || (dspec.Cmd != "python3" && dspec.Cmd != "python") {
+		t.Fatalf("ResolveRuntime(.py) with no python entry = %q, %q, %v; want the preset default", dspec.Cmd, dname, derr)
 	}
-	for _, want := range []string{"python", "registered", "node", "cpp"} {
+	// Unknown extension: the error lists registered runtimes and known
+	// extensions so the user can fix either side.
+	_, _, err = adapter.ResolveRuntime(".rb", noPython)
+	if err == nil {
+		t.Fatal("expected error for unknown extension")
+	}
+	for _, want := range []string{".rb", "node", "cpp", ".py", ".mjs", ".ts", ".cc"} {
 		if !strings.Contains(err.Error(), want) {
-			t.Errorf("unconfigured-runtime error %q missing %q", err.Error(), want)
+			t.Errorf("unknown-ext error %q missing %q", err.Error(), want)
 		}
+	}
+}
+
+// The preset languages resolve with an empty registry (out of the box).
+func TestResolveRuntimeDefaults(t *testing.T) {
+	for _, c := range []struct{ ext, name string }{
+		{".py", "python"}, {".js", "node"}, {".mjs", "node"},
+		{".ts", "ts"}, {".cpp", "cpp"}, {".cc", "cpp"},
+	} {
+		spec, name, err := adapter.ResolveRuntime(c.ext, nil)
+		if err != nil || name != c.name {
+			t.Errorf("ResolveRuntime(%q) with empty rts = %q, %q, %v; want %q", c.ext, spec.Cmd, name, err, c.name)
+		}
+	}
+	_, name, err := adapter.ResolveRuntime(".ts", nil)
+	if err != nil || name != "ts" {
+		t.Fatalf("ts default: %v", err)
 	}
 }
 
@@ -122,13 +147,13 @@ func TestRuntimesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Runtimes: %v", err)
 	}
-	if rts["python"] != (adapter.RuntimeSpec{Cmd: "python3"}) {
+	if !reflect.DeepEqual(rts["python"], adapter.RuntimeSpec{Cmd: "python3"}) {
 		t.Errorf(`rts["python"] = %+v`, rts["python"])
 	}
-	if rts["node"] != (adapter.RuntimeSpec{Cmd: "node"}) {
+	if !reflect.DeepEqual(rts["node"], adapter.RuntimeSpec{Cmd: "node"}) {
 		t.Errorf(`rts["node"] = %+v`, rts["node"])
 	}
-	if rts["cpp"] != (adapter.RuntimeSpec{Build: "g++ -std=c++20 -O2 -o {out} {src}"}) {
+	if !reflect.DeepEqual(rts["cpp"], adapter.RuntimeSpec{Build: "g++ -std=c++20 -O2 -o {out} {src}"}) {
 		t.Errorf(`rts["cpp"] = %+v`, rts["cpp"])
 	}
 	if len(rts) != 3 {
@@ -146,14 +171,63 @@ func TestRuntimesConfigMissing(t *testing.T) {
 	}
 }
 
+// Custom-ext runtimes: cmd form with a declared extension, string or
+// array, normalized to lowercase-with-dot.
+func TestRuntimesConfigExt(t *testing.T) {
+	dir := t.TempDir()
+	content := `return {
+  runtimes = {
+    ts  = { cmd = "node", ext = ".TS" },
+    deno = { cmd = "deno", ext = { ".mts", "ts2" } },
+  },
+}`
+	if err := os.WriteFile(filepath.Join(dir, "config.lua"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rts, err := config.Runtimes(dir)
+	if err != nil {
+		t.Fatalf("Runtimes: %v", err)
+	}
+	if !reflect.DeepEqual(rts["ts"], adapter.RuntimeSpec{Cmd: "node", Ext: []string{".ts"}}) {
+		t.Errorf(`rts["ts"] = %+v, want cmd node + normalized .ts`, rts["ts"])
+	}
+	if !reflect.DeepEqual(rts["deno"], adapter.RuntimeSpec{Cmd: "deno", Ext: []string{".mts", ".ts2"}}) {
+		t.Errorf(`rts["deno"] = %+v, want both extensions normalized`, rts["deno"])
+	}
+}
+
+// ResolveRuntime honors declared extensions beyond the builtin map.
+func TestResolveCustomExt(t *testing.T) {
+	rts := map[string]adapter.RuntimeSpec{
+		"node": {Cmd: "node"},
+		"ts":   {Cmd: "node", Ext: []string{".ts"}},
+	}
+	spec, name, err := adapter.ResolveRuntime(".ts", rts)
+	if err != nil || name != "ts" || spec.Cmd != "node" {
+		t.Fatalf("ResolveRuntime(.ts) = %q, %q, %v; want ts/node", spec.Cmd, name, err)
+	}
+	// Builtin extensions still resolve through the builtin map first.
+	spec, name, err = adapter.ResolveRuntime(".js", rts)
+	if err != nil || name != "node" {
+		t.Fatalf("ResolveRuntime(.js) = %q, %q, %v; want node", spec.Cmd, name, err)
+	}
+	// Unclaimed extension errors and points at the ext declaration.
+	_, _, err = adapter.ResolveRuntime(".tsx", rts)
+	if err == nil || !strings.Contains(err.Error(), "ext") {
+		t.Fatalf("ResolveRuntime(.tsx) err = %v, want an ext hint", err)
+	}
+}
+
 func TestRuntimesConfigInvalid(t *testing.T) {
 	cases := []string{
-		`return { runtimes = { python = 3 } }`,            // bad value form
-		`return { runtimes = { python = "" } }`,          // empty command
-		`return { runtimes = { cpp = {} } }`,             // table without build
-		`return { runtimes = { cpp = { cmd = "g++" } } }`, // table without build
-		`return { runtimes = "x" }`,                      // runtimes not a table
-		`this is not lua!!!`,                             // syntax error
+		`return { runtimes = { python = 3 } }`,                    // bad value form
+		`return { runtimes = { python = "" } }`,                  // empty command
+		`return { runtimes = { cpp = {} } }`,                     // neither cmd nor build
+		`return { runtimes = { cpp = { ext = ".cc" } } }`,        // ext without cmd or build
+		`return { runtimes = { ts = { cmd = "x", ext = 5 } } }`,   // ext not a string
+		`return { runtimes = { ts = { cmd = "x", ext = {5} } } }`, // ext array entry not a string
+		`return { runtimes = "x" }`,                              // runtimes not a table
+		`this is not lua!!!`,                                     // syntax error
 	}
 	for _, c := range cases {
 		dir := t.TempDir()

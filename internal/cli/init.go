@@ -66,8 +66,8 @@ func cmdInit(argv []string, d Deps) int {
 	return 0
 }
 
-// printRuntimeHint tells the user the generated file cannot run until
-// config.lua declares its runtime.
+// printRuntimeHint tells the user the preset defaults apply and where
+// to override them.
 func printRuntimeHint(lang string, d Deps) {
 	cfgDir, err := config.ConfigDir()
 	if err != nil {
@@ -82,6 +82,6 @@ func printRuntimeHint(lang string, d Deps) {
 	case "cpp":
 		snippet = "cpp    = { build = \"g++ -std=c++20 -O2 -o {out} {src}\" },"
 	}
-	fmt.Fprintf(d.Stderr, "hire: note: running it needs a runtimes entry in %s\n  return {\n    runtimes = {\n      %s\n    },\n  }\n",
+	fmt.Fprintf(d.Stderr, "hire: note: preset runtimes work out of the box; to override, add runtimes to %s\n  return {\n    runtimes = {\n      %s\n    },\n  }\n",
 		filepath.Join(cfgDir, "config.lua"), snippet)
 }

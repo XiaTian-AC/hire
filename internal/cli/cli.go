@@ -242,13 +242,17 @@ func loadChain(files []string) (*adapter.Chain, map[string]string, error) {
 	}
 	var rts map[string]adapter.RuntimeSpec
 	for _, p := range files {
-		if isExecExt(filepath.Ext(p)) {
-			rts, err = config.Runtimes(cfgDir)
-			if err != nil {
-				return nil, nil, err
-			}
-			break
+		switch strings.ToLower(filepath.Ext(p)) {
+		case ".lua", ".toml":
+			continue
 		}
+		// Any external-language file (builtin or config-declared
+		// extension) needs the runtimes registry.
+		rts, err = config.Runtimes(cfgDir)
+		if err != nil {
+			return nil, nil, err
+		}
+		break
 	}
 	loaded := make([]*adapter.File, 0, len(files))
 	for _, p := range files {
@@ -264,17 +268,10 @@ func loadChain(files []string) (*adapter.Chain, map[string]string, error) {
 	return adapter.NewChain(loaded...), shells, nil
 }
 
-func isExecExt(ext string) bool {
-	switch strings.ToLower(ext) {
-	case ".py", ".js", ".mjs", ".cpp", ".cc":
-		return true
-	}
-	return false
-}
-
 // loadOne loads a single taskfile; the extension picks the adapter.
-// .mjs/.cc dispatch too but are reachable only via --taskfile, since
-// the auto-discovery list is the fixed five.
+// .mjs/.cc and config.lua-declared extensions dispatch too but are
+// reachable only via --taskfile, since the auto-discovery list is the
+// fixed five.
 func loadOne(path string, rts map[string]adapter.RuntimeSpec) (*adapter.File, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
@@ -282,14 +279,19 @@ func loadOne(path string, rts map[string]adapter.RuntimeSpec) (*adapter.File, er
 		return adapter.LoadLua(path)
 	case ".toml":
 		return adapter.LoadTOML(path)
-	case ".py", ".js", ".mjs", ".cpp", ".cc":
+	case ".py", ".js", ".mjs", ".ts", ".cpp", ".cc":
 		spec, name, err := adapter.ResolveRuntime(ext, rts)
 		if err != nil {
 			return nil, err
 		}
 		return adapter.LoadExec(path, spec, name)
 	}
-	return nil, fmt.Errorf("%s: unsupported taskfile extension %q (known: .toml .lua .py .js .cpp; --taskfile also accepts .mjs .cc)", path, ext)
+	// Custom extensions claimed by a config.lua runtime, e.g.
+	// ts = { cmd = "node", ext = ".ts" }.
+	if spec, name, err := adapter.ResolveRuntime(ext, rts); err == nil {
+		return adapter.LoadExec(path, spec, name)
+	}
+	return nil, fmt.Errorf("%s: unsupported taskfile extension %q (known: .toml .lua .py .js .cpp; --taskfile also accepts .mjs .cc and extensions declared by config.lua runtimes)", path, ext)
 }
 
 func loadTaskfile(d Deps) (*adapter.Chain, map[string]string, error) {

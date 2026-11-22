@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -188,17 +189,57 @@ func Runtimes(dir string) (map[string]adapter.RuntimeSpec, error) {
 			}
 			rts[string(name)] = adapter.RuntimeSpec{Cmd: string(sv)}
 		case *lua.LTable:
-			build, bok := sv.RawGetString("build").(lua.LString)
-			if !bok || string(build) == "" {
-				failure = fmt.Errorf("config.lua: runtimes.%s: table form requires a non-empty build = \"...\" with {out}/{src}", string(name))
+			spec := adapter.RuntimeSpec{}
+			if s, ok := sv.RawGetString("cmd").(lua.LString); ok {
+				spec.Cmd = string(s)
+			}
+			if s, ok := sv.RawGetString("build").(lua.LString); ok {
+				spec.Build = string(s)
+			}
+			if spec.Cmd == "" && spec.Build == "" {
+				failure = fmt.Errorf("config.lua: runtimes.%s: table form needs cmd = \"...\" (interpreted) or build = \"...\" (compiled)", string(name))
 				return
 			}
-			rts[string(name)] = adapter.RuntimeSpec{Build: string(build)}
+			switch ev := sv.RawGetString("ext").(type) {
+			case lua.LString:
+				spec.Ext = append(spec.Ext, normalizeExt(string(ev)))
+			case *lua.LTable:
+				ev.ForEach(func(_, xv lua.LValue) {
+					if failure != nil {
+						return
+					}
+					s, ok := xv.(lua.LString)
+					if !ok {
+						failure = fmt.Errorf("config.lua: runtimes.%s: ext entries must be strings", string(name))
+						return
+					}
+					spec.Ext = append(spec.Ext, normalizeExt(string(s)))
+				})
+			default:
+				if ev != lua.LNil {
+					failure = fmt.Errorf("config.lua: runtimes.%s: ext must be a string or an array of strings", string(name))
+					return
+				}
+			}
+			if failure != nil {
+				return
+			}
+			rts[string(name)] = spec
 		default:
-			failure = fmt.Errorf("config.lua: runtimes.%s must be a command string or { build = \"...\" }", string(name))
+			failure = fmt.Errorf("config.lua: runtimes.%s must be a command string, { cmd = \"...\", ext = \"...\" }, or { build = \"...\" }", string(name))
 		}
 	})
 	return rts, failure
+}
+
+// normalizeExt canonicalizes a configured extension: lowercased, with a
+// leading dot, so ".TS", "ts" and ".ts" all compare equal at resolution.
+func normalizeExt(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s != "" && !strings.HasPrefix(s, ".") {
+		s = "." + s
+	}
+	return s
 }
 
 // FormatDuration renders a duration in hire's compact form: "0", "30m",

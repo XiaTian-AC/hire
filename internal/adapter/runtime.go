@@ -14,36 +14,83 @@ import (
 	"hire/internal/shell"
 )
 
-// RuntimeSpec configures one external runtime in config.lua. Exactly one
-// field is set: Cmd for interpreted languages (the taskfile is an
-// argument to the command), Build for compiled ones (a shell template
-// with {out}/{src} placeholders producing the program to run).
+// RuntimeSpec configures one external runtime in config.lua. Cmd is set
+// for interpreted languages (the taskfile is an argument to the command),
+// Build for compiled ones (a shell template with {out}/{src} placeholders
+// producing the program to run); Ext optionally declares extra taskfile
+// extensions the runtime owns beyond the builtin map (e.g. {".ts"}).
 type RuntimeSpec struct {
-	Cmd   string // e.g. "python3"
-	Build string // e.g. "g++ -std=c++20 -O2 -o {out} {src}"
+	Cmd   string   // e.g. "python3"
+	Build string   // e.g. "g++ -std=c++20 -O2 -o {out} {src}"
+	Ext   []string // e.g. {".ts"} — lowercased, leading dot
 }
 
-// extRuntimes maps taskfile extensions to runtime names. .mjs and .cc
-// are reachable only via --taskfile, matching the lookup chain.
+// extRuntimes maps taskfile extensions to runtime names. .mjs, .ts and
+// .cc are reachable only via --taskfile, matching the lookup chain.
 var extRuntimes = map[string]string{
 	".py":  "python",
 	".js":  "node",
 	".mjs": "node",
+	".ts":  "ts",
 	".cpp": "cpp",
 	".cc":  "cpp",
 }
 
+// defaultSpec returns the out-of-the-box runtime for a builtin language
+// name: config.lua entries override these, so the preset languages work
+// without any configuration. Python probes python3 first (the Linux
+// habit) and falls back to python (the Windows habit).
+func defaultSpec(name string) (RuntimeSpec, bool) {
+	switch name {
+	case "python":
+		if _, err := exec.LookPath("python3"); err == nil {
+			return RuntimeSpec{Cmd: "python3"}, true
+		}
+		return RuntimeSpec{Cmd: "python"}, true
+	case "node", "ts":
+		// node 23+ strips TypeScript types natively; older node fails
+		// with its own clear message, and config.lua can point ts at
+		// tsx or bun instead.
+		return RuntimeSpec{Cmd: "node"}, true
+	case "cpp":
+		return RuntimeSpec{Build: "g++ -std=c++20 -O2 -o {out} {src}"}, true
+	}
+	return RuntimeSpec{}, false
+}
+
 // ResolveRuntime maps a taskfile extension to its runtime spec and
 // registry name (the name also keys the compile-cache directory).
+// Builtin names fall back to defaultSpec when config.lua does not
+// register them, so the preset languages work out of the box.
 func ResolveRuntime(ext string, rts map[string]RuntimeSpec) (RuntimeSpec, string, error) {
-	e := strings.TrimPrefix(strings.ToLower(ext), ".") // accept ".py" and "py"
-	name, ok := extRuntimes["."+e]
+	e := "." + strings.TrimPrefix(strings.ToLower(ext), ".") // accept ".py" and "py"
+	name, ok := extRuntimes[e]
 	if !ok {
-		return RuntimeSpec{}, "", fmt.Errorf("no runtime for extension %q (known: .py .js .mjs .cpp .cc; %s)", ext, registeredList(rts))
+		// Custom-ext runtimes declared in config.lua, e.g.
+		// ts = { cmd = "node", ext = ".mts" }. When several runtimes
+		// claim the same extension, the alphabetically first wins so
+		// resolution stays deterministic.
+		var claiming []string
+		for n, spec := range rts {
+			for _, x := range spec.Ext {
+				if strings.ToLower(x) == e {
+					claiming = append(claiming, n)
+					break
+				}
+			}
+		}
+		if len(claiming) > 0 {
+			sort.Strings(claiming)
+			return rts[claiming[0]], claiming[0], nil
+		}
+		return RuntimeSpec{}, "", fmt.Errorf("no runtime for extension %q (known: .py .js .mjs .ts .cpp .cc; custom extensions are declared with ext = \"...\" in a config.lua runtime; %s)", ext, registeredList(rts))
 	}
 	spec, ok := rts[name]
 	if !ok {
-		return RuntimeSpec{}, "", fmt.Errorf("runtime %q for %q files is not configured in config.lua runtimes (known: .py .js .mjs .cpp .cc; %s)", name, ext, registeredList(rts))
+		if d, has := defaultSpec(name); has {
+			return d, name, nil
+		}
+		return RuntimeSpec{}, "", fmt.Errorf("runtime %q for %q files is not configured in config.lua runtimes (known: .py .js .mjs .ts .cpp .cc; %s)", name, ext, registeredList(rts))
 	}
 	return spec, name, nil
 }

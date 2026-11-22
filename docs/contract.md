@@ -56,15 +56,24 @@ hire 完成 argparse 后，把解析结果以 JSON 放进环境变量 `HIRE_ARGS
 
 config.lua（`~/.config/hire/config.lua`）声明每种语言的命令：
 
+**预置语言开箱即用**：python（自动探测 `python3` → `python`）、node、ts（走 node 23+ 原生类型擦除）、
+cpp（g++）都有内置默认值，不写 config.lua 就能跑；config.lua 仅在你想覆盖时才需要——
+ts 想用 bun/tsx、cpp 想换编译器或 flags 时才来改这里：
+
 ```lua
 return {
   runtimes = {
     python = "python3",                                       -- 字符串 = 解释型命令
     node   = "node",
+    ts     = { cmd = "tsx", ext = ".mts" },                    -- 表 = 自定义扩展名声明
     cpp    = { build = "g++ -std=c++20 -O2 -o {out} {src}" }, -- 表 = 编译型
   },
 }
 ```
+
+表形态两种用法：`{ cmd = "..." , ext = "..." }` 声明一个拥有自定义扩展名的解释型
+运行时（`ext` 可为字符串或数组，如 TypeScript 映到 node 24+ 的原生类型擦除）；
+`{ build = "..." }` 声明编译型。同名扩展多运行时声明时按字母序第一个生效。
 
 - 扩展名内建映射：`.py`→python、`.js`/`.mjs`→node、`.cpp`/`.cc`→cpp；
   `.lua`/`.toml` 走内嵌适配器，不需要 runtimes
@@ -72,8 +81,8 @@ return {
   都会让缓存失效；编译产物存 `<cachedir>/hire/cpp/<hash>.exe`，命中直接执行，
   未命中先经默认 shell 跑 build 模板（占位符仅 `{out}`/`{src}` 两个），编译失败
   报错附编译器完整输出
-- 自动查找链固定探测 `Taskfile.{toml,lua,py,js,cpp}`；**`.mjs`/`.cc` 只在
-  `--taskfile` 显式指定时有效**（自动发现保持短且可预测）
+- 自动查找链固定探测 `Taskfile.{toml,lua,py,js,cpp}`；**`.mjs`/`.cc` 及一切自定义
+  扩展名（含 `.ts`）只在 `--taskfile` 显式指定时有效**（自动发现保持短且可预测）
 - 一个目录里多文件共存时全部加载、同名任务后者赢（stderr 警告）
 
 ## 三语言样板全文
@@ -196,18 +205,17 @@ process.stdout.write("hello, " + (args.name || "hire") + "\n");
 ```cpp
 // hire.hpp - the hire contract SDK for C++ taskfiles.
 //
-// Include it from Taskfile.cpp, register tasks, hand main() over:
+// Include it from Taskfile.cpp, define hire_main with your tasks; the
+// header provides main() itself:
 //
 //     #include "hire.hpp"
 //
-//     int main(int argc, char** argv) {
-//         hire::registry reg;
+//     void hire_main(hire::registry& reg) {
 //         reg.task("hello", "say hello")
 //            .arg("name", "string", false, "who to greet")
 //            .run([](const hire::args& a) {
 //                std::cout << "hello, " << a.get_string("name", "hire") << "\n";
 //            });
-//         return hire::main(reg, argc, argv);
 //     }
 //
 // hire calls your compiled program two ways:
@@ -401,8 +409,8 @@ inline args args::parse(const std::string& json) {
     return out;
 }
 
-// main dispatches the __hire__ contract verbs for the registry.
-inline int main(registry& reg, int argc, char** argv) {
+// dispatch handles the __hire__ contract verbs for the registry.
+inline int dispatch(registry& reg, int argc, char** argv) {
     if (argc < 3 || std::string(argv[1]) != "__hire__") {
         std::cerr << "usage: __hire__ discover | run <name>\n";
         return 1;
@@ -454,27 +462,33 @@ inline int main(registry& reg, int argc, char** argv) {
 }
 
 }  // namespace hire
-```
 
-```cpp
-// hire Taskfile.cpp - with hire.hpp, the contract is one call away.
-// hire compiles this file once with the build template from config.lua
-// (cpp = { build = "g++ -std=c++20 -O2 -o {out} {src}" }), caches the
-// binary by source hash, then drives it with __hire__ discover / run.
-// Full contract: docs/contract.md.
-
-#include "hire.hpp"
+// hire_main is yours to define: declare tasks into reg. The main()
+// below dispatches the __hire__ contract verbs around it - you never
+// write main yourself.
+void hire_main(hire::registry& reg);
 
 int main(int argc, char** argv) {
     hire::registry reg;
+    hire_main(reg);
+    return hire::dispatch(reg, argc, argv);
+}
+```
 
-    // Your tasks: name, desc, typed args, then the body.
+```cpp
+// hire Taskfile.cpp - declare your tasks in hire_main; hire.hpp brings
+// everything else (dispatch, discover, HIRE_ARGS parsing, even main()).
+// hire compiles this file once with the build template from config.lua
+// (cpp = { build = "g++ -std=c++20 -O2 -o {out} {src}" }), caches the
+// binary by source hash. Full contract: docs/contract.md.
+
+#include "hire.hpp"
+
+void hire_main(hire::registry& reg) {
     reg.task("hello", "say hello (edit me)")
         .arg("name", "string", false, "who to greet")
         .run([](const hire::args& a) {
             std::cout << "hello, " << a.get_string("name", "hire") << "\n";
         });
-
-    return hire::main(reg, argc, argv);
 }
 ```

@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.0.1
+
+- **Preset languages work out of the box.** python (probes `python3` →
+  `python`), node, ts, and cpp have built-in default commands; config.lua
+  runtimes entries are now overrides, not requirements. `.ts` is a builtin
+  extension (`--taskfile`-explicit, like `.mjs`/`.cc`) running on Node 23+
+  native type stripping.
+- **C++ SDK header.** `hire init --lang cpp` now generates `hire.hpp` (the
+  `__hire__` contract SDK: dispatch, discover emission, a real HIRE_ARGS
+  parser with escape handling) alongside a slim `Taskfile.cpp` — tasks are
+  declared in `hire_main`, and the header provides `main()` itself.
+- **Custom-extension runtimes.** config.lua runtimes can claim taskfile
+  extensions beyond the builtin map — e.g. `deno = { cmd = "deno", ext = {".mts", ".x"} }`.
+  Custom extensions are explicit `--taskfile` only, like `.mjs`/`.cc`.
+
 ## v2.0.0 (draft — unreleased)
 
 ### Breaking changes
