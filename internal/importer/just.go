@@ -73,11 +73,7 @@ func parseJust(path string, src []byte) (*Result, error) {
 			if len(cmds) == 0 && strings.HasPrefix(t, "#!") {
 				r.script = true
 			}
-			if r.script {
-				cmds = append(cmds, t)
-			} else {
-				cmds = append(cmds, t)
-			}
+			cmds = append(cmds, t)
 		}
 		if r.script {
 			warnf(&res.Warnings, "script recipe (task %s)", r.name)

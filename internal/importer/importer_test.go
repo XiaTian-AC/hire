@@ -346,6 +346,40 @@ func TestMakeMalformed(t *testing.T) {
 	wantErr(t, "make", "Makefile", "this is not make\n", `Makefile:1: missing separator`)
 }
 
+// @ silent prefixes are stripped and warned (hire never echoes); the
+// - ignore-error prefix is stripped and warned (a failure always stops
+// the task, so the semantic cannot survive); backslash continuations
+// merge into one command.
+func TestMakePrefixesAndContinuations(t *testing.T) {
+	res := convert(t, "make", "Makefile", `.PHONY: hello clean wrap
+hello:
+	@echo hi
+
+clean:
+	-rm -rf tmp
+
+wrap:
+	echo one \
+	two
+`)
+	wantWarnings(t, res,
+		"hire: not migrated: make '@' silent prefix (task hello)",
+		"hire: not migrated: make '-' ignore-errors prefix (task clean)",
+	)
+	hello := findTask(t, res, "hello")
+	if strings.Join(hello.Cmds, "|") != "echo hi" {
+		t.Errorf("hello cmds = %q, want @ stripped", hello.Cmds)
+	}
+	clean := findTask(t, res, "clean")
+	if strings.Join(clean.Cmds, "|") != "rm -rf tmp" {
+		t.Errorf("clean cmds = %q, want - stripped", clean.Cmds)
+	}
+	wrap := findTask(t, res, "wrap")
+	if strings.Join(wrap.Cmds, "|") != "echo one two" {
+		t.Errorf("wrap cmds = %q, want continuation merged", wrap.Cmds)
+	}
+}
+
 // --- go-task (ruling 3) ---
 
 const gotaskSrc = `version: '3'
@@ -531,9 +565,6 @@ func TestEmitEscapes(t *testing.T) {
 func TestEmitWhenOSForms(t *testing.T) {
 	res := convert(t, "task", "Taskfile.yml", gotaskSrc)
 	out := string(importer.Emit(res, "Taskfile.yml"))
-	if !strings.Contains(out, `when = { os = "windows, linux" }`) && strings.Contains(out, "windows,linux") {
-		// placeholder guard; real assertions below
-	}
 	if !strings.Contains(out, `when = { os = "windows" }`) {
 		t.Errorf("single platform must emit scalar os:\n%s", out)
 	}

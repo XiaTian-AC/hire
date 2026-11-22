@@ -18,12 +18,14 @@ var makeDirectives = map[string]bool{
 
 // mkGroup is one target rule while its tab recipe is being collected.
 type mkGroup struct {
-	names     []string // multi-target lines expand into one task per name
-	deps      []string
-	cmds      []string
-	orderOnly bool     // `|` prerequisites present
-	varDeps   []string // $(...)-shaped prerequisites, dropped
-	skip      bool     // .PHONY-style or pattern rule: recipes consumed, no tasks
+	names      []string // multi-target lines expand into one task per name
+	deps       []string
+	cmds       []string
+	orderOnly  bool     // `|` prerequisites present
+	varDeps    []string // $(...)-shaped prerequisites, dropped
+	skip       bool     // .PHONY-style or pattern rule: recipes consumed, no tasks
+	atWarned   bool     // '@' silent prefix seen in this recipe
+	dashWarned bool     // '-' ignore-errors prefix seen in this recipe
 }
 
 // parseMake converts a Makefile per controller ruling 1: targets and
@@ -48,6 +50,7 @@ func parseMake(path string, src []byte) (*Result, error) {
 
 	idx := map[string]int{} // target name -> index in res.Tasks; redefinition overwrites in place
 	var cur *mkGroup
+	var pending string // backslash continuation: command text awaiting its tail
 
 	flush := func() {
 		g := cur
@@ -100,8 +103,37 @@ func parseMake(path string, src []byte) (*Result, error) {
 			if cur == nil {
 				return nil, fmt.Errorf("%s:%d: recipe line without a target", base, no)
 			}
-			if !cur.skip {
-				cur.cmds = append(cur.cmds, strings.TrimRight(ln[1:], " \t"))
+			if cur.skip {
+				continue
+			}
+			text := strings.TrimSpace(ln[1:])
+			if pending != "" {
+				text = strings.TrimSpace(pending + " " + text)
+				pending = ""
+			}
+			if text == "" {
+				continue // tab-only line: not a command
+			}
+			if strings.HasSuffix(text, "\\") {
+				pending = strings.TrimRight(strings.TrimSuffix(text, "\\"), " \t")
+				continue
+			}
+			// '@' silences make's echo (hire never echoes: strip) and
+			// '-' ignores errors (a failure always stops the task: strip).
+			// Neither semantic survives; each warns once per task.
+			for strings.HasPrefix(text, "@") || strings.HasPrefix(text, "-") {
+				if strings.HasPrefix(text, "@") && !cur.atWarned {
+					cur.atWarned = true
+					warnf(&res.Warnings, "make '@' silent prefix (task %s)", cur.names[0])
+				}
+				if strings.HasPrefix(text, "-") && !cur.dashWarned {
+					cur.dashWarned = true
+					warnf(&res.Warnings, "make '-' ignore-errors prefix (task %s)", cur.names[0])
+				}
+				text = text[1:]
+			}
+			if text != "" {
+				cur.cmds = append(cur.cmds, text)
 			}
 			continue
 		}
@@ -135,6 +167,10 @@ func parseMake(path string, src []byte) (*Result, error) {
 		if strings.HasPrefix(rest, ":") { // double-colon rule
 			rest = rest[1:]
 		}
+		if pending != "" && cur != nil && !cur.skip {
+			cur.cmds = append(cur.cmds, pending) // dangling continuation
+		}
+		pending = ""
 		flush()
 		if strings.HasPrefix(names[0], ".") {
 			// .PHONY and the other special targets: ignored per ruling 1,
@@ -168,6 +204,9 @@ func parseMake(path string, src []byte) (*Result, error) {
 			}
 		}
 		cur = g
+	}
+	if pending != "" && cur != nil && !cur.skip {
+		cur.cmds = append(cur.cmds, pending) // file ends mid-continuation
 	}
 	flush()
 	if len(res.Tasks) == 0 {
