@@ -468,9 +468,12 @@ void hire_main(hire::registry& reg) {
 	}
 	writeTo := filepath.Join(dir, "decoded.txt")
 	t.Setenv("HIRE_WRITE", writeTo)
-	// Exactly what Go's json.Marshal emits for these bytes: HTML chars
-	// plus \u0001 (control) and \u00e9 (non-ASCII BMP).
-	t.Setenv("HIRE_ARGS", `{"tag":"a<b>&c","ctrl":"\u0001\u00e9"}`)
+	// Pin the EXACT bytes Go's json.Marshal emits: HTML-escaped <>&
+	// (\u003c \u003e \u0026) in tag, and \u00XX for control/unicode in ctrl.
+	// (Raw UTF-8 is kept escaped here: on Windows a narrow getenv in a
+	// non-UTF-8 locale mangles raw UTF-8 env bytes before the parser sees
+	// them - an OS env-var constraint, not a parser issue.)
+	t.Setenv("HIRE_ARGS", `{"tag":"a\u003cb\u003e\u0026c","ctrl":"\u0001\u00e9"}`)
 	if out, err := exec.Command(exe, "__hire__", "run", "probe").CombinedOutput(); err != nil {
 		t.Fatalf("probe run: %v\n%s", err, out)
 	}
