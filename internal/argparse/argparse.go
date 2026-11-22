@@ -2,6 +2,7 @@ package argparse
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,7 +59,7 @@ func Parse(argv []string, specs map[string]Spec) (*Parsed, error) {
 					return nil, fmt.Errorf("flag --%s requires a value", body)
 				}
 				n, err := strconv.ParseFloat(argv[i+1], 64)
-				if err != nil {
+				if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
 					return nil, fmt.Errorf("flag --%s: want num, got %q", body, argv[i+1])
 				}
 				p.Flags[body] = n
@@ -106,7 +107,7 @@ func setFlag(p *Parsed, specs map[string]Spec, name, val string) error {
 	}
 	if hasSpec && sp.Type == "num" {
 		n, err := strconv.ParseFloat(val, 64)
-		if err != nil {
+		if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
 			return fmt.Errorf("flag --%s: want num, got %q", name, val)
 		}
 		p.Flags[name] = n

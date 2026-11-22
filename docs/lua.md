@@ -198,7 +198,7 @@ deploy = task { cmd = "bash:./deploy.sh", when = { os = {"linux", "darwin"} } }
 ## 8. x.run：同文件调用
 
 `x.run("test")` 调用**同一个文件里**的另一任务（可带 args table）。每个 Lua 文件
-是独立 LState，跨文件不互调；TOML 内联 run 同理只在该 TOML 文件的任务集合内。
+是独立 LState，跨文件不互调；TOML 的 `deps` 同理只引用同一文件的任务（加载期校验）。
 外部语言 taskfile 想复用逻辑就写函数——契约不做任务间调用。
 
 ## 9. Lua 语言子集

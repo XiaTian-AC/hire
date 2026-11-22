@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.1.0
+
+破坏性变更：**TOML taskfile 不再支持内联 Lua `run`**——`Taskfile.toml` 现在是纯静态声明（`cmd`/`cmds` + `{{arg}}` 插值 + `deps`）。需要逻辑的任务请改用 Python/Node/C++/Lua taskfile。含 `run` 的旧 TOML 文件加载期报错并给出改写指引；`hire import` 可从 Just/Make/go-task 迁移到新 schema。
+
+- **Python 装饰器 SDK.** `hire init --lang python` 生成 `hire.py` + 瘦 `Taskfile.py`；`@task` + `opt/req/flag/num` 声明助手；裸单文件契约依旧合法
+- **C++ 函数形式（用户自配 clang）.** taskfile 只写普通 C++ 函数（`// desc:` 注释即描述）；hire 调用 PATH 上的 clang++ 解析 AST JSON，纯 Go 解析无 Cgo、无内置工具链；`#include` 包装 TU 保真实行号，解析结果缓存零执行；hire.hpp 链式形态降级为合法遗留
+- **num 参数类型.** `--port 8080` 走 float64 校验，Lua `num`/hpp `.num`/Python `num()` 糖齐全，NaN/Inf 拒绝
+- **TOML 纯静态.** `cmd`/`cmds` 等价互斥、`{{name}}` 原文替换 + `{{flag:+word}}` bool 条件插入、`deps` 同文件顺序执行且加载期全校验（未知/循环/必填依赖）
+- **`hire import`.** 从 justfile / Makefile / Taskfile.yml 迁移到新 TOML；逐条"未迁移"警告；产物可再生，`--force` 覆盖
+- **预置默认运行时.** python/node/ts/cpp 无需 config.lua 即可跑；config 中的 runtimes 现为覆盖而非必需；自定义扩展名可用 `ext = ".ts"` 声明
+
 ## v2.0.3
 
 - **`hire init` is per-file.** An existing sibling no longer blocks

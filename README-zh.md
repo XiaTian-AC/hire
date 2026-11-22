@@ -149,7 +149,7 @@ iex (hire env-setup)          # export 模式：收集的命令进你自己的 s
 |---|---|
 | [Lua 参考](docs/lua.md) | v2 语法：声明形式、`task{}`/`req`/`bool`、`x` API、持久实例（及其坑）、export 模式 |
 | [契约](docs/contract.md) | `__hire__` 两动词、discover JSON、`HIRE_ARGS` 形状、runtimes 配置、Python/Node/C++ 样板全文 |
-| [TOML 参考](docs/toml.md) | `Taskfile.toml` schema、内联 Lua `run`、严格性规则 |
+| [TOML 参考](docs/toml.md) | 纯静态 `Taskfile.toml` schema：`cmd`/`cmds`、参数、插值、`deps`、严格性规则 |
 | [示例 taskfile](testdata/Taskfile.lua) | 覆盖主要形式的可运行样例 |
 
 ## 源码构建

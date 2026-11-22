@@ -142,7 +142,7 @@ iex (hire env-setup)          # export mode: collected commands into YOUR shell
 |---|---|
 | [Lua reference](docs/lua.md) | v2 syntax: declaration forms, `task{}`/`req`/`bool`, the `x` API, persistent instances (and their sharp edges), export mode |
 | [Contract](docs/contract.md) | The two `__hire__` verbs, discover JSON, `HIRE_ARGS` shape, runtimes config, full Python/Node/C++ boilerplate |
-| [TOML reference](docs/toml.md) | `Taskfile.toml` schema, inline Lua `run`, strictness rules |
+| [TOML reference](docs/toml.md) | Pure-static `Taskfile.toml` schema: `cmd`/`cmds`, args, interpolation, `deps`, strictness rules |
 | [Example taskfile](testdata/Taskfile.lua) | Runnable sample covering the main forms |
 
 ## From source

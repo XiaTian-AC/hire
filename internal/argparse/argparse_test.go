@@ -151,6 +151,13 @@ func TestParseStrictNumFlagInvalid(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "want num") {
 		t.Errorf("equals form should fail the same way, got %v", err)
 	}
+	// ParseFloat accepts NaN/Inf, but neither survives JSON encoding in
+	// HIRE_ARGS - reject them with the same 'want num' vocabulary.
+	for _, bad := range []string{"NaN", "Inf", "-Inf"} {
+		if _, err = Parse([]string{"--port=" + bad}, specs); err == nil || !strings.Contains(err.Error(), "want num") {
+			t.Errorf("--port=%s should be rejected as not a num, got %v", bad, err)
+		}
+	}
 }
 
 func TestParseStrictNumFlagMissingValue(t *testing.T) {
