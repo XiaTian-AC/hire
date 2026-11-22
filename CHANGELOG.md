@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.0.2
 
 - **C++ arg sugar.** `task_def` gains `.req` / `.opt` / `.flag` chaining
   helpers mirroring the Lua adapter's `req`/`bool` sugar; the generated
