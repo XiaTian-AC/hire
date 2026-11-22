@@ -248,24 +248,30 @@ func justRecipe(base string, line int, sig []string, comment, attrs []string, wa
 // conditional form {{name:+word}}, and everything else (just functions,
 // variables, unknown names) stays literal with one warning each.
 func justPlaceholders(r *justRec, cmds []string, warns *[]string) {
-	declared := map[string]Arg{}
-	for _, a := range r.args {
-		declared[a.Name] = a
+	declared := map[string]int{}
+	for i, a := range r.args {
+		declared[a.Name] = i
 	}
 	seen := map[string]bool{}
 	for _, cmd := range cmds {
 		for _, m := range justTmplRe.FindAllStringSubmatch(cmd, -1) {
 			content := m[1]
 			if cm := justCondRe.FindStringSubmatch(content); cm != nil {
-				if a, ok := declared[cm[1]]; ok && a.Type == "bool" {
+				if i, ok := declared[cm[1]]; ok && r.args[i].Type == "bool" {
 					continue
 				}
 			}
 			if im := justIdentRe.FindStringSubmatch(content); im != nil {
-				if a, ok := declared[im[1]]; ok {
-					if a.Type == "bool" && !seen[content] {
+				if i, ok := declared[im[1]]; ok {
+					if !seen[content] {
 						seen[content] = true
-						warnf(warns, "bool arg %q must use the conditional form {{%s:+word}} (task %s)", im[1], im[1], r.name)
+						if r.args[i].Type == "bool" {
+							// just prints a raw bool's text for {{name}};
+							// the loader only allows bools in the
+							// {{name:+word}} form, so demote to string.
+							r.args[i].Type = "string"
+							warnf(warns, "bool arg %q must use the conditional form {{%s:+word}} (task %s)", im[1], im[1], r.name)
+						}
 					}
 					continue
 				}
@@ -273,6 +279,7 @@ func justPlaceholders(r *justRec, cmds []string, warns *[]string) {
 			if !seen[content] {
 				seen[content] = true
 				warnf(warns, "just template {{%s}} kept literal (task %s)", content, r.name)
+				autoPlaceholderArg(&r.args, content)
 			}
 		}
 	}

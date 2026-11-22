@@ -47,7 +47,7 @@ func EnsureDataDir() (string, error) {
 }
 
 // Taskfiles returns the fixed five-file lookup candidates for dir, in
-// probe order. .mjs/.cc are deliberately absent: they are reachable
+// probe order. .mjs/.cc/.ts are deliberately absent: they are reachable
 // only through --taskfile.
 func Taskfiles(dir string) []string {
 	names := [...]string{"Taskfile.toml", "Taskfile.lua", "Taskfile.py", "Taskfile.js", "Taskfile.cpp"}

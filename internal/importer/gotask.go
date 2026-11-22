@@ -159,7 +159,7 @@ func parseGoTask(path string, src []byte) (*Result, error) {
 			cmds = []string{"echo " + name}
 			warnf(&res.Warnings, "recipe-less task (echo no-op synthesized) (task %s)", name)
 		}
-		task.Cmds = bakeVars(cmds, lookup, name, &res.Warnings)
+		bakeVars(&task, cmds, lookup, &res.Warnings)
 
 		if pv, present := tm["platforms"]; present {
 			list, ok := pv.([]any)
@@ -222,8 +222,9 @@ func gtEntries(v any) ([]any, error) {
 
 // bakeVars replaces {{.VAR}} in every command with the literal static
 // value (string, number, bool) from the file vars; non-static or
-// unknown templates stay literal and warn once per unique text.
-func bakeVars(cmds []string, lookup func(string) (any, bool), task string, warns *[]string) []string {
+// unknown templates stay literal, warn once per unique text and get an
+// auto-declared optional arg so the emitted TOML passes the loader.
+func bakeVars(task *Task, cmds []string, lookup func(string) (any, bool), warns *[]string) {
 	out := make([]string, len(cmds))
 	seen := map[string]bool{}
 	for i, cmd := range cmds {
@@ -241,11 +242,12 @@ func bakeVars(cmds []string, lookup func(string) (any, bool), task string, warns
 		for _, m := range gtTmplRe.FindAllString(out[i], -1) {
 			if !seen[m] {
 				seen[m] = true
-				warnf(warns, "dynamic template %s kept literal (task %s)", m, task)
+				warnf(warns, "dynamic template %s kept literal (task %s)", m, task.Name)
+				autoPlaceholderArg(&task.Args, m[2:len(m)-2])
 			}
 		}
 	}
-	return out
+	task.Cmds = out
 }
 
 // scalarText renders a static YAML scalar the way it appears in source;

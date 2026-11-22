@@ -61,7 +61,7 @@ namespace { void helper() {} }   // 匿名命名空间/static 函数 = 助手，
 
 - argparse：Spec 校验 + help 显示 `num`
 - Lua 糖：`num "port number"`（可选）；必填 num 走全形式 `{type="num", required=true}`
-- C++：`HIRE_NUM` / `HIRE_REQ_NUM`；`a.get_num(key, fallback)` 返回 double
+- C++：`num("desc")` 糖（可选 num）；`a.get_num(key, fallback)` 返回 double
 - Python SDK：`num("desc")`；JSON 里天然是 number
 - TOML：`{{port}}` 插值为数字文本
 - exec discover schema 透传 JSON 机制无需改，但**类型白名单在三处适配器同步扩容**：`adapter.go` 的 `validArgType`（`string`|`bool`|`num`）+ lua/toml/exec 三处错误文案（"use \"string\", \"bool\" or \"num\""）+ 各自加载测试

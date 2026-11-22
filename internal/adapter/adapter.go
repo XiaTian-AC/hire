@@ -14,7 +14,7 @@ import (
 	"hire/internal/argparse"
 )
 
-// reservedGlobals may not be used as task names in any adapter.
+// reservedGlobals may not be used as task names in the Lua and TOML adapters.
 var reservedGlobals = map[string]bool{
 	"x": true, "shell": true, "task": true, "req": true, "bool": true, "num": true,
 }

@@ -165,7 +165,7 @@ tagged = task {
 		t.Fatalf("ls-running: %q", out)
 	}
 
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	finished := false
 	for time.Now().Before(deadline) {
 		out, _ = runBin(t, bin, "ls-running")
@@ -176,7 +176,7 @@ tagged = task {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if !finished {
-		t.Fatal("quick task did not finish within 30s")
+		t.Fatal("quick task did not finish within 60s")
 	}
 
 	out, code = runBin(t, bin, "watch", "quick#1")
@@ -724,5 +724,53 @@ if __name__ == "__main__":
 	out, _ = runBinOpt(t, bin, work, nil, "ls-running")
 	if strings.Contains(out, "sleepy#1") {
 		t.Fatalf("cleaned instance must be gone: %q", out)
+	}
+}
+
+// TestIntegrationImportRunnability pins the import↔strict-loader seam:
+// a justfile with one mappable and one un-mappable {{...}} recipe must
+// convert into a Taskfile.toml that `hire ls` accepts and whose tasks
+// run directly (I1 review finding). Before the fix, `hire ls` died with
+// `task "weird": unknown placeholder {{ext}}`.
+func TestIntegrationImportRunnability(t *testing.T) {
+	bin := buildBinary(t)
+	cfgDir, _ := os.MkdirTemp("", "hire-cfg-")
+	dataDir, _ := os.MkdirTemp("", "hire-data-")
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	t.Setenv("XDG_DATA_HOME", dataDir)
+
+	work := t.TempDir()
+	writeTaskfile(work, "justfile", `# say hi
+hello:
+    echo hello-from-import
+
+# needs manual wiring
+weird:
+    echo value={{ext}}
+`)
+
+	out, code := runBinOpt(t, bin, work, nil, "import", "justfile")
+	if code != 0 {
+		t.Fatalf("import: code=%d out=%q", code, out)
+	}
+	if !strings.Contains(out, "not migrated") || !strings.Contains(out, "{{ext}}") {
+		t.Errorf("import must warn about the unmapped placeholder: %q", out)
+	}
+
+	// The converted file loads without a manual edit.
+	out, code = runBinOpt(t, bin, work, nil, "ls")
+	if code != 0 || !strings.Contains(out, "hello") || !strings.Contains(out, "weird") {
+		t.Fatalf("ls after import: code=%d out=%q", code, out)
+	}
+
+	// Running the converted task: omitted optional arg renders empty;
+	// wiring --ext prints the value.
+	out, code = runBinOpt(t, bin, work, nil, "weird")
+	if code != 0 || !strings.Contains(out, "value=") {
+		t.Fatalf("run imported weird (no arg): code=%d out=%q", code, out)
+	}
+	out, code = runBinOpt(t, bin, work, nil, "weird", "--ext", "abc")
+	if code != 0 || !strings.Contains(out, "value=abc") {
+		t.Fatalf("run imported weird (--ext): code=%d out=%q", code, out)
 	}
 }

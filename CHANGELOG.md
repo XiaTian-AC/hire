@@ -9,8 +9,6 @@
 - **num 参数类型.** `--port 8080` 走 float64 校验，Lua `num`/hpp `.num`/Python `num()` 糖齐全，NaN/Inf 拒绝
 - **TOML 纯静态.** `cmd`/`cmds` 等价互斥、`{{name}}` 原文替换 + `{{flag:+word}}` bool 条件插入、`deps` 同文件顺序执行且加载期全校验（未知/循环/必填依赖）
 - **`hire import`.** 从 justfile / Makefile / Taskfile.yml 迁移到新 TOML；逐条"未迁移"警告；产物可再生，`--force` 覆盖
-- **预置默认运行时.** python/node/ts/cpp 无需 config.lua 即可跑；config 中的 runtimes 现为覆盖而非必需；自定义扩展名可用 `ext = ".ts"` 声明
-
 ## v2.0.3
 
 - **`hire init` is per-file.** An existing sibling no longer blocks

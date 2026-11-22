@@ -63,6 +63,21 @@ func findArg(t *testing.T, task importer.Task, name string) importer.Arg {
 	return importer.Arg{}
 }
 
+// assertLoadable writes emitted TOML to a real file and loads it through
+// the adapter: import output must be directly runnable by hire.
+func assertLoadable(t *testing.T, out []byte) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "Taskfile.toml")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := adapter.LoadTOML(path)
+	if err != nil {
+		t.Fatalf("LoadTOML rejected imported output: %v\n%s", err, out)
+	}
+	defer f.Close()
+}
+
 // --- sniffing (ruling 1) ---
 
 func TestSniff(t *testing.T) {
@@ -214,6 +229,21 @@ func TestJustPlaceholderWarnings(t *testing.T) {
 	if files.Type != "string" || !files.Required {
 		t.Errorf("+files arg = %+v, want required string", files)
 	}
+
+	// I1 regression: every un-mappable placeholder (and the raw bool
+	// use) must survive a real LoadTOML. Before auto-declaring args this
+	// failed with: task "weird": unknown placeholder {{ext}}.
+	weird := findTask(t, res, "weird")
+	for _, name := range []string{"ext", "uppercase(x)"} {
+		a := findArg(t, weird, name)
+		if a.Type != "string" || a.Required {
+			t.Errorf("auto arg %q = %+v, want optional string", name, a)
+		}
+	}
+	if a := findArg(t, findTask(t, res, "push"), "force"); a.Type != "string" {
+		t.Errorf("raw bool force = %+v, want demoted to string", a)
+	}
+	assertLoadable(t, importer.Emit(res, "justfile"))
 }
 
 func TestJustMalformed(t *testing.T) {
@@ -380,6 +410,22 @@ wrap:
 	}
 }
 
+// '+' forces a recursive make under -n; hire has no dry run so the
+// prefix is stripped and warned, like '@' and '-'.
+func TestMakePlusPrefix(t *testing.T) {
+	res := convert(t, "make", "Makefile", `.PHONY: recurse
+recurse:
+	+echo sub
+	+echo again
+`)
+	wantWarnings(t, res,
+		"hire: not migrated: make '+' recursive prefix (task recurse)",
+	)
+	if got := strings.Join(findTask(t, res, "recurse").Cmds, "|"); got != "echo sub|echo again" {
+		t.Errorf("recurse cmds = %q, want '+' stripped", got)
+	}
+}
+
 // --- go-task (ruling 3) ---
 
 const gotaskSrc = `version: '3'
@@ -448,6 +494,15 @@ func TestGotaskMapping(t *testing.T) {
 	if got := strings.Join(findTask(t, res, "simple").Cmds, "|"); got != "echo single" {
 		t.Errorf("simple cmds = %q, want single cmd form", got)
 	}
+
+	// I1 regression: the kept dynamic template gets an auto-declared
+	// arg, so the whole emitted file loads (previously "unknown
+	// placeholder {{now | date \"2006\"}}").
+	a := findArg(t, findTask(t, res, "dyn"), `now | date "2006"`)
+	if a.Type != "string" || a.Required {
+		t.Errorf("auto arg for dynamic template = %+v, want optional string", a)
+	}
+	assertLoadable(t, importer.Emit(res, "Taskfile.yml"))
 }
 
 func TestGotaskDepsWarningOnce(t *testing.T) {

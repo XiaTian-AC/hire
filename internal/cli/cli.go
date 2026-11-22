@@ -295,7 +295,7 @@ func loadOne(path string, rts map[string]adapter.RuntimeSpec) (*adapter.File, er
 	if spec, name, err := adapter.ResolveRuntime(ext, rts); err == nil {
 		return adapter.LoadExec(path, spec, name)
 	}
-	return nil, fmt.Errorf("%s: unsupported taskfile extension %q (known: .toml .lua .py .js .cpp; --taskfile also accepts .mjs .cc and extensions declared by config.lua runtimes)", path, ext)
+	return nil, fmt.Errorf("%s: unsupported taskfile extension %q (known: .toml .lua .py .js .cpp; --taskfile also accepts .mjs .cc .ts and extensions declared by config.lua runtimes)", path, ext)
 }
 
 func loadTaskfile(d Deps) (*adapter.Chain, map[string]string, error) {

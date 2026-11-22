@@ -538,6 +538,32 @@ inline args args::parse(const std::string& json) {
                     case 'n': v += '\n'; break;
                     case 't': v += '\t'; break;
                     case 'r': v += '\r'; break;
+                    case 'b': v += '\b'; break;
+                    case 'f': v += '\f'; break;
+                    case 'u': {
+                        // Go's json.Marshal emits < > & and control chars
+                        // as \uXXXX; decode all four hex digits to UTF-8
+                        // instead of appending a literal 'u003c'-style byte run.
+                        if (i + 4 > n) break;
+                        unsigned int cp = 0;
+                        for (size_t k = 0; k < 4; ++k) {
+                            const char h = json[i + k];
+                            cp = (cp << 4) | static_cast<unsigned int>(
+                                h <= '9' ? h - '0' : (h | 0x20) - 'a' + 10);
+                        }
+                        i += 4;
+                        if (cp < 0x80) {
+                            v += static_cast<char>(cp);
+                        } else if (cp < 0x800) {
+                            v += static_cast<char>(0xC0 | (cp >> 6));
+                            v += static_cast<char>(0x80 | (cp & 0x3F));
+                        } else {
+                            v += static_cast<char>(0xE0 | (cp >> 12));
+                            v += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                            v += static_cast<char>(0x80 | (cp & 0x3F));
+                        }
+                        break;
+                    }
                     default:  v += c;     // covers \" \\ \/ and any other
                 }
             } else {

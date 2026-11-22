@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -432,5 +433,53 @@ func TestExecCppGxx(t *testing.T) {
 	}
 	if string(got) != argsJSON {
 		t.Errorf("cpp HIRE_ARGS round trip: got %q want %q", string(got), argsJSON)
+	}
+}
+
+// TestCppHeaderArgsUnicodeRoundTrip pins review I2: Go's json.Marshal
+// HTML-escapes < > & (as \u003c \u003e \u0026) and control chars into
+// \u00XX. The hand-written C++ parser must decode every \uXXXX into
+// UTF-8 so a get_string value reaches the task intact. Skipped when
+// g++ is absent.
+func TestCppHeaderArgsUnicodeRoundTrip(t *testing.T) {
+	probeCmd(t, "g++")
+	dir := t.TempDir()
+	hpp := filepath.Join(dir, "hire.hpp")
+	if err := os.WriteFile(hpp, []byte(adapter.CppHeaderTemplate), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cpp := filepath.Join(dir, "probe.cpp")
+	src := `#include "hire.hpp"
+#include <fstream>
+void hire_main(hire::registry& reg) {
+    reg.task("probe").opt("tag").opt("ctrl").run([](const hire::args& a) {
+        const char* w = std::getenv("HIRE_WRITE");
+        std::ofstream out(w ? w : "out.txt");
+        out << a.get_string("tag", "") << "|" << a.get_string("ctrl", "");
+    });
+}
+`
+	if err := os.WriteFile(cpp, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(dir, "probe.exe")
+	if out, err := exec.Command("g++", "-std=c++20", "-o", exe, cpp).CombinedOutput(); err != nil {
+		t.Fatalf("g++ build: %v\n%s", err, out)
+	}
+	writeTo := filepath.Join(dir, "decoded.txt")
+	t.Setenv("HIRE_WRITE", writeTo)
+	// Exactly what Go's json.Marshal emits for these bytes: HTML chars
+	// plus \u0001 (control) and \u00e9 (non-ASCII BMP).
+	t.Setenv("HIRE_ARGS", `{"tag":"a<b>&c","ctrl":"\u0001\u00e9"}`)
+	if out, err := exec.Command(exe, "__hire__", "run", "probe").CombinedOutput(); err != nil {
+		t.Fatalf("probe run: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(writeTo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "a<b>&c|\x01é"
+	if string(got) != want {
+		t.Errorf("decoded args = %q, want %q", string(got), want)
 	}
 }

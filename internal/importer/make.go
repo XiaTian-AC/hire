@@ -26,6 +26,7 @@ type mkGroup struct {
 	skip       bool     // .PHONY-style or pattern rule: recipes consumed, no tasks
 	atWarned   bool     // '@' silent prefix seen in this recipe
 	dashWarned bool     // '-' ignore-errors prefix seen in this recipe
+	plusWarned bool     // '+' recursive prefix seen in this recipe
 }
 
 // parseMake converts a Makefile per controller ruling 1: targets and
@@ -118,10 +119,12 @@ func parseMake(path string, src []byte) (*Result, error) {
 				pending = strings.TrimRight(strings.TrimSuffix(text, "\\"), " \t")
 				continue
 			}
-			// '@' silences make's echo (hire never echoes: strip) and
-			// '-' ignores errors (a failure always stops the task: strip).
-			// Neither semantic survives; each warns once per task.
-			for strings.HasPrefix(text, "@") || strings.HasPrefix(text, "-") {
+			// '@' silences make's echo (hire never echoes: strip),
+			// '-' ignores errors (a failure always stops the task: strip)
+			// and '+' forces recursion under make -n (hire has no dry
+			// run: strip). None of the three semantics survives; each
+			// warns once per task.
+			for strings.HasPrefix(text, "@") || strings.HasPrefix(text, "-") || strings.HasPrefix(text, "+") {
 				if strings.HasPrefix(text, "@") && !cur.atWarned {
 					cur.atWarned = true
 					warnf(&res.Warnings, "make '@' silent prefix (task %s)", cur.names[0])
@@ -129,6 +132,10 @@ func parseMake(path string, src []byte) (*Result, error) {
 				if strings.HasPrefix(text, "-") && !cur.dashWarned {
 					cur.dashWarned = true
 					warnf(&res.Warnings, "make '-' ignore-errors prefix (task %s)", cur.names[0])
+				}
+				if strings.HasPrefix(text, "+") && !cur.plusWarned {
+					cur.plusWarned = true
+					warnf(&res.Warnings, "make '+' recursive prefix (task %s)", cur.names[0])
 				}
 				text = text[1:]
 			}

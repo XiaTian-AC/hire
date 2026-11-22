@@ -42,6 +42,26 @@ func warnf(w *[]string, format string, args ...any) {
 	*w = append(*w, "hire: not migrated: "+fmt.Sprintf(format, args...))
 }
 
+// autoPlaceholderArg declares an optional arg for an un-mappable
+// {{...}} placeholder so the emitted TOML passes the real loader:
+// {{name:+word}} needs a bool spec, every other content a string spec.
+// An omitted optional arg renders as empty text, so the task stays
+// runnable while the warning still tells the user what to wire up.
+func autoPlaceholderArg(args *[]Arg, content string) {
+	name, typ := content, "string"
+	if k := strings.Index(content, ":+"); k > 0 {
+		name, typ = content[:k], "bool"
+	}
+	for _, a := range *args {
+		if a.Name == name {
+			return // already declared; never emit a duplicate TOML table
+		}
+	}
+	*args = append(*args, Arg{Name: name, Type: typ, Desc: "unmapped import placeholder"})
+	// shortcut: a conditional whose prefix is a non-bool declared arg
+	// stays unloadable; promote that arg to bool by hand in that case.
+}
+
 // Import converts src, a file of the given format ("just", "make" or
 // "task"; see Sniff), into the hire schema.
 func Import(from, path string, src []byte) (*Result, error) {
