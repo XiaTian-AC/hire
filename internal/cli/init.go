@@ -13,12 +13,12 @@ import (
 // initFile is one generated file for a --lang value.
 type initFile struct{ file, tmpl string }
 
-// initLangs maps --lang values to the generated files. The cpp runtime
-// generates two: hire.hpp (the contract SDK) plus the taskfile that
-// includes it.
+// initLangs maps --lang values to the generated files. The python and
+// cpp runtimes generate two: the contract SDK (hire.py / hire.hpp)
+// plus the taskfile that imports or includes it.
 var initLangs = map[string][]initFile{
 	"lua":    {{"Taskfile.lua", adapter.LuaTemplate}},
-	"python": {{"Taskfile.py", adapter.PythonTemplate}},
+	"python": {{"hire.py", adapter.PythonSDKTemplate}, {"Taskfile.py", adapter.PythonTemplate}},
 	"node":   {{"Taskfile.js", adapter.NodeTemplate}},
 	"cpp":    {{"hire.hpp", adapter.CppHeaderTemplate}, {"Taskfile.cpp", adapter.CppTemplate}},
 }

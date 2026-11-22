@@ -2,8 +2,9 @@ package adapter
 
 // Taskfile templates for `hire init` (spec §10 item 1): one runnable
 // hello task plus comments; the external-language ones embed the full
-// __hire__ contract. docs/contract.md reprints the three external
-// listings verbatim — edit both together.
+// __hire__ contract (python's contract lives in the generated hire.py
+// SDK module). docs/contract.md reprints the external listings
+// verbatim — edit both together.
 
 // LuaTemplate is the default scaffold: the native adapter, no contract
 // code needed.
@@ -33,16 +34,39 @@ hello = task {
 }
 `
 
-// PythonTemplate embeds the __hire__ contract for the python runtime.
-const PythonTemplate = `#!/usr/bin/env python3
-"""hire Taskfile.py - a taskfile is any program speaking the __hire__ contract.
+// PythonSDKTemplate is hire.py, the __hire__ contract SDK for Python
+// taskfiles: the @task decorator registry, the arg-declaration helpers,
+// and dispatch() for the contract verbs. Edit together with
+// PythonTemplate and the Python listings in docs/contract.md — they
+// must stay identical.
+const PythonSDKTemplate = `"""hire.py - the hire contract SDK for Python taskfiles.
 
-hire calls it two ways:
+A taskfile is any program speaking the __hire__ contract; this SDK is a
+convenience, not a requirement. Two legal shapes:
+
+  SDK (what hire init --lang python scaffolds): keep this hire.py beside
+  a thin Taskfile.py that imports it and only holds tasks:
+
+      from hire import task, opt
+
+      @task("hello", desc="say hello", args={"name": opt("who to greet")})
+      def hello(a):
+          print(f"hello, {a.name or 'hire'}")
+
+      import hire
+      if __name__ == "__main__":
+          hire.dispatch()
+
+  Raw single-file: write the two __hire__ verbs by hand in one program
+  (a full listing lives in docs/contract.md) - hire.py adds no private
+  mechanism, only boilerplate you would otherwise retype.
+
+hire calls your program two ways:
   python Taskfile.py __hire__ discover     -> print {"tasks": [...]} to stdout
   python Taskfile.py __hire__ run <name>   -> run the task
 Parsed CLI arguments arrive as JSON in the HIRE_ARGS environment variable:
-{"name": "v2", "_": ["positional"]} - flags plus the "_" positional array,
-{} when the task declares no args. Full contract: docs/contract.md.
+{"name": "v2", "port": 8080, "_": ["positional"]} - flags plus the "_"
+positional array, {} when the task declares no args.
 
 discover must stay pure: describe tasks, no side effects.
 """
@@ -51,39 +75,92 @@ import json
 import os
 import sys
 
-TASKS = [
-    {
-        "name": "hello",
-        "desc": "say hello (edit me)",
-        "args": {
-            "name": {"type": "string", "required": False, "desc": "who to greet"},
-        },
-    },
-]
+# registry maps task name -> (spec, fn). Insertion-ordered: discover
+# lists tasks in the order their @task decorators ran (dicts keep
+# insertion order on Python 3.7+).
+_registry = {}
 
 
-def discover():
-    json.dump({"tasks": TASKS}, sys.stdout)
+def opt(name, desc=""):
+    """An optional string argument."""
+    return {"type": "string", "required": False, "desc": desc}
 
 
-def run(name):
-    args = json.loads(os.environ.get("HIRE_ARGS", "{}"))
-    if name == "hello":
-        print(f"hello, {args.get('name') or 'hire'}")
-        return
-    sys.exit(f"hire: unknown task {name!r}")
+def req(name, desc=""):
+    """A required string argument."""
+    return {"type": "string", "required": True, "desc": desc}
 
 
-if __name__ == "__main__":
-    if len(sys.argv) >= 3 and sys.argv[1] == "__hire__":
-        if sys.argv[2] == "discover":
-            discover()
-        elif sys.argv[2] == "run" and len(sys.argv) >= 4:
-            run(sys.argv[3])
-        else:
-            sys.exit("usage: Taskfile.py __hire__ discover | run <name>")
-    else:
+def flag(name, desc=""):
+    """An optional bool argument."""
+    return {"type": "bool", "required": False, "desc": desc}
+
+
+def num(name, desc=""):
+    """An optional number argument (an Args attribute is a float)."""
+    return {"type": "num", "required": False, "desc": desc}
+
+
+def task(name, desc="", args=None):
+    """Register the decorated function as a hire task."""
+
+    def register(fn):
+        _registry[name] = ({"name": name, "desc": desc, "args": args or {}}, fn)
+        return fn
+
+    return register
+
+
+class Args:
+    """The parsed HIRE_ARGS JSON: a.name (None when absent), a.get(name,
+    default) for explicit fallbacks, a._ for the positional array."""
+
+    def __init__(self, raw):
+        self._raw = raw
+        self._ = raw.get("_", [])
+
+    def __getattr__(self, name):
+        return self._raw.get(name)
+
+    def get(self, name, default=None):
+        return self._raw.get(name, default)
+
+
+def dispatch():
+    """Handle the __hire__ contract verbs for the registered tasks."""
+    if len(sys.argv) < 3 or sys.argv[1] != "__hire__":
         sys.exit("this file is a hire taskfile; run its tasks via the hire CLI")
+    if sys.argv[2] == "discover":
+        json.dump({"tasks": [spec for spec, _ in _registry.values()]}, sys.stdout)
+        return
+    if sys.argv[2] == "run" and len(sys.argv) >= 4:
+        name = sys.argv[3]
+        if name not in _registry:
+            sys.exit(f"hire: unknown task {name!r}")
+        spec, fn = _registry[name]
+        raw = json.loads(os.environ.get("HIRE_ARGS", "{}"))
+        for arg, decl in spec["args"].items():
+            # hire marshals 8080.0 as 8080, which json parses back as an
+            # int; declared num args are coerced to floats here.
+            if decl.get("type") == "num" and type(raw.get(arg)) is int:
+                raw[arg] = float(raw[arg])
+        fn(Args(raw))
+        return
+    sys.exit("usage: Taskfile.py __hire__ discover | run <name>")
+`
+
+// PythonTemplate is the user-facing thin taskfile paired with
+// PythonSDKTemplate (hire.py): only the tasks - the contract, the
+// parsing, even the __hire__ verbs live in hire.py.
+const PythonTemplate = `from hire import task, opt
+
+@task("hello", desc="say hello (edit me)", args={"name": opt("who to greet")})
+def hello(a):
+    print(f"hello, {a.name or 'hire'}")
+
+import hire
+if __name__ == "__main__":
+    hire.dispatch()
 `
 
 // NodeTemplate embeds the __hire__ contract for the node runtime.
