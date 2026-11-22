@@ -77,6 +77,8 @@ func Run(argv []string, d Deps) int {
 		return cmdLs(d)
 	case "init":
 		return cmdInit(rest, d)
+	case "import":
+		return cmdImport(rest, d)
 	case "start", "run":
 		if len(rest) == 0 {
 			fmt.Fprintf(d.Stderr, "hire: usage: hire %s <task> [args]\n", cmd)
@@ -157,6 +159,8 @@ Usage:
   hire bstart <task> [args] run a task in the background (detached)
   hire ls                   list tasks
   hire init [--lang <lang>] scaffold a runnable starter taskfile (lua default)
+  hire import [--from just|make|task] [--force] <file>
+                            convert a justfile/Makefile/Taskfile.yml to Taskfile.toml
   hire ls-running           list background instances (filtered by display.ls_running.time)
   hire clean [--all|--older-than <dur>]
                             remove ended instances (and their logs)
