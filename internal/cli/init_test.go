@@ -1,13 +1,17 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
+	"hire/internal/adapter"
 	"hire/internal/config"
 )
 
@@ -68,8 +72,9 @@ func TestInitLuaScaffold(t *testing.T) {
 	}
 }
 
-// init python generates a file that discovers and runs through the
-// __hire__ contract; skipped when no python is on PATH.
+// init python generates the SDK pair (hire.py + Taskfile.py) and
+// bootstraps itself through the real load path — ls discovers via
+// dispatch, hello runs; skipped when no python is on PATH.
 func TestInitPythonScaffold(t *testing.T) {
 	py := probePath(t, "python", "python3")
 	t.Chdir(t.TempDir())
@@ -80,8 +85,10 @@ func TestInitPythonScaffold(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("init --lang python: code=%d err=%q", code, errOut.String())
 	}
-	if _, err := os.Stat("Taskfile.py"); err != nil {
-		t.Fatalf("Taskfile.py not created: %v", err)
+	for _, file := range []string{"hire.py", "Taskfile.py"} {
+		if _, err := os.Stat(file); err != nil {
+			t.Fatalf("%s not created: %v", file, err)
+		}
 	}
 	if !strings.Contains(errOut.String(), "runtimes") {
 		t.Errorf("init python should print the runtimes config hint: err=%q", errOut.String())
@@ -109,11 +116,142 @@ func TestInitPythonScaffold(t *testing.T) {
 	}
 }
 
+// TestPythonSDKArgForms drives the decorator SDK through the real load
+// path: discover lists tasks in registration order (dicts keep
+// insertion order on Python 3.7+), req/flag/num helpers round-trip
+// through HIRE_ARGS (num crosses as a JSON number and reads back as a
+// float), positionals land in a._, and the run verb rejects unknown
+// tasks on stderr with exit 1.
+func TestPythonSDKArgForms(t *testing.T) {
+	py := probePath(t, "python", "python3")
+	t.Chdir(t.TempDir())
+	d, out, errOut := setupEnv(t, "")
+	writeRuntimesConfig(t, "python", py)
+	if err := os.WriteFile("hire.py", []byte(adapter.PythonSDKTemplate), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const taskfile = `from hire import task, req, flag, num
+import hire
+
+@task("zebra", desc="first registered", args={"who": req("who to greet")})
+def zebra(a):
+    if a.who != "dk":
+        raise SystemExit(f"who={a.who!r}")
+
+@task("alpha", desc="flag plus positionals", args={"loud": flag("shout")})
+def alpha(a):
+    if a.loud is not True:
+        raise SystemExit(f"loud={a.loud!r}")
+    if a._ != ["pos", "args"]:
+        raise SystemExit(f"_={a._!r}")
+
+@task("probe", desc="num round trip", args={"port": num("listen port")})
+def probe(a):
+    if a.port != 8080.0 or not isinstance(a.port, float):
+        raise SystemExit(f"port={a.port!r} ({type(a.port).__name__})")
+
+if __name__ == "__main__":
+    hire.dispatch()
+`
+	if err := os.WriteFile("Taskfile.py", []byte(taskfile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Discover order is the registration order, not alphabetical.
+	var buf bytes.Buffer
+	discover := exec.Command(py, "Taskfile.py", "__hire__", "discover")
+	discover.Stdout = &buf
+	if err := discover.Run(); err != nil {
+		t.Fatalf("__hire__ discover: %v\n%s", err, buf.String())
+	}
+	var dj struct {
+		Tasks []struct {
+			Name string `json:"name"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &dj); err != nil {
+		t.Fatalf("discover JSON: %v\n%s", err, buf.String())
+	}
+	names := make([]string, 0, len(dj.Tasks))
+	for _, task := range dj.Tasks {
+		names = append(names, task.Name)
+	}
+	if want := []string{"zebra", "alpha", "probe"}; !slices.Equal(names, want) {
+		t.Fatalf("discover order = %v, want %v", names, want)
+	}
+
+	// Each declared form through the full argparse -> HIRE_ARGS -> Args
+	// path; a wrong shape exits nonzero, so exit 0 pins the contract.
+	for _, argv := range [][]string{
+		{"zebra", "--who", "dk"},
+		{"alpha", "pos", "args", "--loud"},
+		{"probe", "--port", "8080"},
+	} {
+		out.Reset()
+		if code := Run(argv, d); code != 0 {
+			t.Fatalf("Run(%q): code=%d out=%q err=%q", argv, code, out.String(), errOut.String())
+		}
+	}
+	out.Reset()
+	if code := Run([]string{"zebra"}, d); code == 0 || !strings.Contains(errOut.String(), "missing required flag --who") {
+		t.Fatalf("zebra without --who: code=%d err=%q (want required-flag failure)", code, errOut.String())
+	}
+
+	// The run verb rejects unknown tasks: stderr message, exit 1 (hire
+	// itself never sends one, but the verb must stay honest).
+	buf.Reset()
+	run := exec.Command(py, "Taskfile.py", "__hire__", "run", "nope")
+	run.Stdout = &buf
+	run.Stderr = &buf
+	if err := run.Run(); err == nil {
+		t.Fatal("__hire__ run nope should exit nonzero")
+	} else if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 {
+		t.Fatalf("__hire__ run nope: %v (want exit 1)", err)
+	}
+	if !strings.Contains(buf.String(), "unknown task") {
+		t.Fatalf("run nope stderr: %q", buf.String())
+	}
+}
+
+// TestContractPythonListings pins the byte-identity rule: the Python
+// SDK listings in docs/contract.md must reprint the templates.go
+// constants verbatim. CRLF from an autocrlf checkout is normalized —
+// the committed bytes are LF, like the constants.
+func TestContractPythonListings(t *testing.T) {
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Skip("go.mod not found; running outside the module")
+		}
+		dir = parent
+	}
+	doc, err := os.ReadFile(filepath.Join(dir, "docs", "contract.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized := strings.ReplaceAll(string(doc), "\r\n", "\n")
+	for _, tmpl := range []struct{ name, body string }{
+		{"PythonSDKTemplate", adapter.PythonSDKTemplate},
+		{"PythonTemplate", adapter.PythonTemplate},
+	} {
+		if !strings.Contains(normalized, tmpl.body) {
+			t.Errorf("docs/contract.md must reprint %s verbatim (starting %q)", tmpl.name, strings.SplitN(tmpl.body, "\n", 2)[0])
+		}
+	}
+}
+
 // All external-language templates generate without the toolchain
 // present, and each print the runtimes config hint.
 func TestInitGeneratesAllLangs(t *testing.T) {
 	for lang, files := range map[string][]string{
-		"python": {"Taskfile.py"},
+		"python": {"hire.py", "Taskfile.py"},
 		"node":   {"Taskfile.js"},
 		"cpp":    {"hire.hpp", "Taskfile.cpp"},
 	} {
