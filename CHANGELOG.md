@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.2.0
+
+C++ 函数形式新增 `hire::sh`（shell 实例），与 Lua `x.sh` 对等：默认持久实例（按 `(inst, shell)` 复用，`cd`/`export` 跨调用存活）、`inst=2+` 隔离实例、`inst=0` 导出模式、`shell:` 前缀 one-shot、内置 shell 白名单与三方/Unix-pwsh 降级警告一次。协议照搬 `internal/runtime/ctx.go`：哨兵 `__HIRE_RC:<nonce>:<rc>` 不透传、非零退出抛异常、`main()` RAII teardown 不留孤儿进程。
+
+**无破坏性变更**：遗留 hpp 链式形态（`hire_main`）继续合法；函数形式文件可加一行 `#include "hire.hpp"` 选用新能力，不加则行为不变。
+
+- **判别**：C++ 契约形态改按 `hire_main`/`__hire__` 识别，不再认 `hire.hpp` 字节——函数形式文件 include hire.hpp 用 `hire::sh` 不再被误判走 raw 路径
+- **两阶段 include 可见性**：内嵌 hire.hpp 在 parse 之前写进缓存目录，discover 与 build 两阶段各注入 `-I<缓存目录>`；用户 build 模板无需改动
+- **C++ shell 实例**：`hire::sh(cmd, inst=1, shell="")`；inst=0 由 `detail::finish_export` 在 run 分支成功/失败两条路径刷出或丢弃（TTY 下给 `eval`/`iex` 提示）；Windows 用 CreatePipe/CreateProcess、Unix 用 pipe/fork/execvp，零新依赖
+
 ## v2.1.0
 
 破坏性变更：**TOML taskfile 不再支持内联 Lua `run`**——`Taskfile.toml` 现在是纯静态声明（`cmd`/`cmds` + `{{arg}}` 插值 + `deps`）。需要逻辑的任务请改用 Python/Node/C++/Lua taskfile。含 `run` 的旧 TOML 文件加载期报错并给出改写指引；`hire import` 可从 Just/Make/go-task 迁移到新 schema。

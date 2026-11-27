@@ -662,6 +662,73 @@ void hire_main(hire::registry& reg) {
 	}
 }
 
+// TestIntegrationCppShellInstances: a function-form C++ taskfile that
+// includes hire.hpp and uses hire::sh gets Lua-parity shell instances:
+// cd/export persist in one instance, inst=2 is isolated, inst=0 collects
+// for export mode, and a non-zero command fails the task. Requires clang
+// (function-form discover) and g++; skipped where absent. HIRE_SHELL=sh
+// makes the POSIX assertions deterministic on Windows (Git Bash, no WSL
+// stub) and Unix alike.
+func TestIntegrationCppShellInstances(t *testing.T) {
+	bin := buildBinary(t)
+	cfgDir, _ := os.MkdirTemp("", "hire-cfg-")
+	dataDir, _ := os.MkdirTemp("", "hire-data-")
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	t.Setenv("XDG_DATA_HOME", dataDir)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	langCmd(t, "g++")
+	langCmd(t, "clang++", "clang") // function-form discover needs clang; absent here -> SKIP
+	writeTaskfile(filepath.Join(cfgDir, "hire"), "config.lua",
+		"return { runtimes = { cpp = { build = \"g++ -std=c++20 -O2 -o {out} {src}\" } } }")
+
+	work := t.TempDir()
+	writeTaskfile(work, "Taskfile.cpp", `#include "hire.hpp"
+
+// desc: state persists across calls in one instance
+void persist() {
+    hire::sh("cd /tmp");
+    hire::sh("pwd");
+    hire::sh("export FOO=42");
+    hire::sh("echo value=$FOO");
+    hire::sh("echo isolated=[$FOO]", 2);
+}
+
+// desc: collect commands for export mode
+void exp() {
+    hire::sh("echo one", 0);
+    hire::sh("echo two", 0);
+}
+
+// desc: a failing command fails the task
+void failing() {
+    hire::sh("false");
+}
+`)
+	env := []string{"HIRE_SHELL=sh"}
+
+	out, code := runBinOpt(t, bin, work, env, "persist")
+	if code != 0 || !strings.Contains(out, "/tmp") || !strings.Contains(out, "value=42") ||
+		!strings.Contains(out, "isolated=[]") {
+		t.Fatalf("persist: code=%d out=%q (want cd+export persisted, inst 2 isolated)", code, out)
+	}
+	if strings.Contains(out, "__HIRE_RC") {
+		t.Fatalf("persist leaked the shell sentinel to stdout: %q", out)
+	}
+
+	out, code = runBinOpt(t, bin, work, env, "exp")
+	if code != 0 || !strings.Contains(out, "echo one") || !strings.Contains(out, "echo two") {
+		t.Fatalf("export mode: code=%d out=%q (want both collected commands flushed)", code, out)
+	}
+	if strings.Contains(out, "__HIRE_RC") {
+		t.Fatalf("export mode leaked a sentinel to stdout: %q", out)
+	}
+
+	out, code = runBinOpt(t, bin, work, env, "failing")
+	if code == 0 || !strings.Contains(out, "command failed") {
+		t.Fatalf("failing: code=%d out=%q (want non-zero exit with command-failed error)", code, out)
+	}
+}
+
 // TestIntegrationBstartExternalLifecycle: an external-language task
 // walks the whole background lifecycle — bstart, ls-running, stop,
 // watch, clean — through the same bg machinery as native tasks.
