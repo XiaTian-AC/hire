@@ -387,7 +387,7 @@ void build(std::string target = "app", int opt = 2, double scale = 1.5) {
 ```
 
 **hpp 链式形态（合法遗留）**：v2.0.x 的写法继续有效——include hire.hpp、在
-hire_main 里注册。文件含 `hire.hpp` 或 `__hire__` 字样时走该 raw 契约路径
+hire_main 里注册。文件定义 `hire_main` 或含 `__hire__` 字样时走该 raw 契约路径（函数形式文件可 include hire.hpp 用 `hire::sh`，但不定义 hire_main，故仍走函数形式）
 （discover 每次现查，不走函数形式缓存）；`hire init` 不再生成它，全文如下
 （手写契约程序同样合法——头文件只是便利品，不引入任何私有机制）：
 

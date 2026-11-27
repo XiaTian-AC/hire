@@ -28,11 +28,12 @@ import (
 )
 
 // isContractForm reports whether a C++ source speaks the raw __hire__
-// contract itself: both byte markers only ever appear in contract-form
-// files, so the check is honest and complete. Everything else is the
-// function form.
+// contract itself. The SDK legacy form defines hire_main (and includes
+// hire.hpp); the hand-written raw form contains the __hire__ verb
+// literal. Function-form files may include hire.hpp for hire::sh but
+// never define hire_main, so those two markers are complete and honest.
 func isContractForm(src []byte) bool {
-	return bytes.Contains(src, []byte("hire.hpp")) || bytes.Contains(src, []byte("__hire__"))
+	return bytes.Contains(src, []byte("hire_main")) || bytes.Contains(src, []byte("__hire__"))
 }
 
 // FuncParam is one extracted function parameter.

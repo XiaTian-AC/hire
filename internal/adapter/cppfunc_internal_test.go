@@ -24,6 +24,7 @@ func TestIsContractForm(t *testing.T) {
 	}{
 		{"hpp include", `#include "hire.hpp"` + "\nvoid hire_main() {}\n", true},
 		{"contract verb", `#include <cstdio>\nint main(){ printf("__hire__"); }`, true},
+		{"function form with sdk include", `#include "hire.hpp"` + "\n// desc: hi\nvoid hi() {}\n", false},
 		{"function form", "#include <iostream>\n\n// desc: hi\nvoid hi() {}\n", false},
 		{"empty", "", false},
 		{"binary garbage", "\x00\x01\x02", false},
