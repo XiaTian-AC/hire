@@ -10,6 +10,14 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-28-cpp-shell-instances-design.md`
 
+## 派发批次（按 AGENTS.md 合并派发：2 个 subagent，不是 5 个）
+
+下面有 5 个 TDD task，但**派发合并为 2 个 subagent 批次**，每个 subagent 依次做多个 task 并逐 task commit（AGENTS.md「合并派发」）：
+
+- **Wave 1（subagent #1，hy4）**：Task 1 + Task 2。同改 `cppfunc.go`/`runtime.go`，逻辑连贯（判别 → include 可见性），串行逐 commit。
+- **Wave 2（subagent #2，hy4）**：Task 3 + Task 4 + Task 5。Task 3/4 同改 `templates.go`（引擎 → 导出），Task 5 收尾（集成/CHANGELOG/全量门），串行逐 commit。
+- Wave 2 依赖 Wave 1（Task 3 的 include 可见性来自 Task 2）。全在 `internal/adapter`，无并行空间。
+
 ## Global Constraints
 
 - **绝不内置工具链/解释器**：shell、clang、g++ 一律从用户 PATH 探测；SDK 是内嵌文本常量，不打包任何二进制。违反即 Critical。
