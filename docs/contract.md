@@ -422,6 +422,22 @@ hire_main 里注册。文件定义 `hire_main` 或含 `__hire__` 字样时走该
 #include <string>
 #include <utility>
 #include <vector>
+#include <memory>
+#include <stdexcept>
+#include <cstdio>
+#include <ctime>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <cerrno>
+#include <time.h>
+#endif
 
 namespace hire {
 
@@ -495,6 +511,544 @@ public:
         return tasks.back();
     }
 };
+
+// ---- persistent shell instances (ported from the Lua x.sh protocol) ----
+//
+// hire::sh runs a command in a shell. By default the command shares one
+// persistent shell process per (inst, shell), so "cd" and "export" survive
+// across calls. inst = 0 collects commands for export mode; a builtin
+// "shell:" prefix forces a one-shot. A non-zero command exit throws, and
+// dispatch turns that into a clean non-zero process exit code.
+namespace detail {
+
+inline bool is_builtin(const std::string& name) {
+    return name == "pwsh" || name == "bash" || name == "sh";
+}
+
+inline std::string default_shell_name() {
+    const char* e = std::getenv("HIRE_SHELL");
+    if (e != nullptr && *e != '\0') return std::string(e);
+#ifdef _WIN32
+    return "pwsh";
+#else
+    return "bash";
+#endif
+}
+
+// split_shell_prefix recognizes only builtin shell names, so a Windows
+// path like C:\dir stays a whole command (review focus: no false prefix).
+inline bool split_shell_prefix(const std::string& cmd, std::string& name, std::string& rest) {
+    size_t i = cmd.find(':');
+    if (i == std::string::npos || i == 0) return false;
+    name = cmd.substr(0, i);
+    if (!is_builtin(name)) return false;
+    rest = cmd.substr(i + 1);
+    return true;
+}
+
+inline std::vector<std::string> oneshot_argv(const std::string& name, const std::string& cmd) {
+    std::vector<std::string> a;
+    a.push_back(name);
+    if (name == "pwsh") { a.push_back("-NoProfile"); a.push_back("-Command"); }
+    else if (name == "bash") { a.push_back("-euo"); a.push_back("pipefail"); a.push_back("-c"); }
+    else if (name == "sh") { a.push_back("-e"); a.push_back("-c"); }
+    else { a.push_back("-c"); }
+    a.push_back(cmd);
+    return a;
+}
+
+inline std::vector<std::string> persistent_argv(const std::string& name) {
+    std::vector<std::string> a;
+    a.push_back(name);
+    if (name == "pwsh") { a.push_back("-NoProfile"); a.push_back("-NonInteractive"); a.push_back("-Command"); a.push_back("-"); }
+    else if (name == "bash") { a.push_back("--norc"); a.push_back("--noprofile"); a.push_back("-s"); }
+    else if (name == "sh") { a.push_back("-s"); }
+    return a;
+}
+
+inline std::string new_nonce() {
+    static unsigned long counter = 0;
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "%lx%lx", (unsigned long)std::time(nullptr), ++counter);
+    return std::string(buf);
+}
+
+inline bool starts_with(const std::string& s, const std::string& p) {
+    return s.size() >= p.size() && s.compare(0, p.size(), p) == 0;
+}
+
+inline std::string rtrim_crlf(const std::string& s) {
+    size_t e = s.size();
+    while (e > 0 && (s[e - 1] == '\r' || s[e - 1] == '\n')) --e;
+    return s.substr(0, e);
+}
+
+struct inst_key {
+    int inst;
+    std::string shell;
+    bool operator<(const inst_key& o) const {
+        if (inst != o.inst) return inst < o.inst;
+        return shell < o.shell;
+    }
+};
+
+// A persistent shell child: a command channel (stdin) and a line-oriented
+// output channel (stdout), plus the process handle for teardown.
+struct shell_instance {
+    std::string name;
+#ifdef _WIN32
+    void* in_w = nullptr;
+    void* out_r = nullptr;
+    void* proc = nullptr;
+#else
+    int in_fd = -1;
+    int out_fd = -1;
+    long pid = -1;
+#endif
+    bool closed = false;
+    std::string rdbuf;
+    size_t rdpos = 0;
+
+    ~shell_instance() { teardown(); }
+
+    long read_some(char* buf, long cap) {
+#ifdef _WIN32
+        DWORD n = 0;
+        if (!ReadFile((HANDLE)out_r, buf, (DWORD)cap, &n, nullptr)) return 0;
+        return (long)n;
+#else
+        for (;;) {
+            ssize_t n = ::read(out_fd, buf, (size_t)cap);
+            if (n < 0 && errno == EINTR) continue;
+            return n > 0 ? (long)n : 0;
+        }
+#endif
+    }
+
+    bool read_line(std::string& out) {
+        out.clear();
+        for (;;) {
+            if (rdpos < rdbuf.size()) {
+                char c = rdbuf[rdpos++];
+                if (c == '\n') return true;
+                out += c;
+                continue;
+            }
+            char tmp[1024];
+            long n = read_some(tmp, (long)sizeof(tmp));
+            if (n <= 0) return false;
+            rdbuf.assign(tmp, (size_t)n);
+            rdpos = 0;
+        }
+    }
+
+    bool write_all(const std::string& data) {
+        const char* p = data.c_str();
+        size_t left = data.size();
+        while (left > 0) {
+#ifdef _WIN32
+            DWORD wrote = 0;
+            if (!WriteFile((HANDLE)in_w, p, (DWORD)left, &wrote, nullptr) || wrote == 0) return false;
+            p += wrote;
+            left -= (size_t)wrote;
+#else
+            ssize_t wrote = ::write(in_fd, p, left);
+            if (wrote < 0) { if (errno == EINTR) continue; return false; }
+            if (wrote == 0) return false;
+            p += wrote;
+            left -= (size_t)wrote;
+#endif
+        }
+        return true;
+    }
+
+    // send writes cmd + a sentinel echo, then scans stdout line by line.
+    // Non-sentinel lines pass through to stdout; the sentinel itself is
+    // consumed and never printed (review focus: no __HIRE_RC leak).
+    int send(const std::string& cmd) {
+        const std::string nonce = new_nonce();
+        const std::string prefix = std::string("__HIRE_RC:") + nonce + ":";
+        std::string echo;
+        if (name == "pwsh") {
+            // $? catches cmdlet failures; $LASTEXITCODE is seeded at start.
+            echo = "Write-Output \"__HIRE_RC:" + nonce + ":$(if ($?) { $LASTEXITCODE } else { 1 })\"";
+        } else {
+            echo = "printf '__HIRE_RC:%s:%s\\n' " + nonce + " \"$?\"";
+        }
+        if (!write_all(cmd + "\n" + echo + "\n")) {
+            throw std::runtime_error("hire::sh: shell instance died while running: " + cmd);
+        }
+        for (;;) {
+            std::string line;
+            const bool full = read_line(line);
+            const std::string trimmed = rtrim_crlf(line);
+            if (starts_with(trimmed, prefix)) {
+                const std::string rest = trimmed.substr(prefix.size());
+                if (!rest.empty()) {
+                    char* end = nullptr;
+                    const long code = std::strtol(rest.c_str(), &end, 10);
+                    if (end != rest.c_str() && *end == '\0') return (int)code;
+                }
+                if (!full) break;   // malformed sentinel: consume, do not leak
+                continue;
+            }
+            if (!trimmed.empty() || full) { std::cout << trimmed << "\n"; std::cout.flush(); }
+            if (!full) break;
+        }
+        throw std::runtime_error("hire::sh: shell instance exited before reporting status: " + cmd);
+    }
+
+    void teardown() {
+        if (closed) return;
+        closed = true;
+#ifdef _WIN32
+        if (in_w) { CloseHandle((HANDLE)in_w); in_w = nullptr; }
+        if (proc) {
+            if (WaitForSingleObject((HANDLE)proc, 500) == WAIT_TIMEOUT) {
+                TerminateProcess((HANDLE)proc, 1);
+                WaitForSingleObject((HANDLE)proc, INFINITE);
+            }
+            CloseHandle((HANDLE)proc);
+            proc = nullptr;
+        }
+        if (out_r) { CloseHandle((HANDLE)out_r); out_r = nullptr; }
+#else
+        if (in_fd >= 0) { ::close(in_fd); in_fd = -1; }
+        if (pid > 0) {
+            bool reaped = false;
+            for (int k = 0; k < 50 && !reaped; ++k) {
+                int st = 0;
+                pid_t r = ::waitpid((pid_t)pid, &st, WNOHANG);
+                if (r == (pid_t)pid || (r < 0 && errno == ECHILD)) { reaped = true; break; }
+                struct timespec ts;
+                ts.tv_sec = 0;
+                ts.tv_nsec = 10 * 1000 * 1000;
+                ::nanosleep(&ts, nullptr);
+            }
+            if (!reaped) { ::kill((pid_t)pid, SIGKILL); ::waitpid((pid_t)pid, nullptr, 0); }
+            pid = -1;
+        }
+        if (out_fd >= 0) { ::close(out_fd); out_fd = -1; }
+#endif
+    }
+};
+
+#ifdef _WIN32
+// resolve_shell_exe mirrors shell_windows.go: pwsh/powershell and sh come
+// from PATH, but "bash" must be Git Bash, not the WSL launcher at
+// C:\Windows\System32\bash.exe that shadows it and has no distro to exec.
+inline std::string resolve_shell_exe(const std::string& name) {
+    char buf[MAX_PATH];
+    DWORD n;
+    if (name == "pwsh") {
+        n = SearchPathA(nullptr, "pwsh.exe", nullptr, MAX_PATH, buf, nullptr);
+        if (n == 0) n = SearchPathA(nullptr, "powershell.exe", nullptr, MAX_PATH, buf, nullptr);
+        if (n > 0 && n < MAX_PATH) return std::string(buf, n);
+        return name;
+    }
+    if (name == "sh") {
+        n = SearchPathA(nullptr, "sh.exe", nullptr, MAX_PATH, buf, nullptr);
+        if (n > 0 && n < MAX_PATH) return std::string(buf, n);
+        return name;
+    }
+    if (name == "bash") {
+        n = SearchPathA(nullptr, "git.exe", nullptr, MAX_PATH, buf, nullptr);
+        if (n > 0 && n < MAX_PATH) {
+            std::string git(buf, n);
+            size_t p = git.find_last_of("\\/");
+            if (p != std::string::npos && p > 0) {
+                size_t p2 = git.find_last_of("\\/", p - 1);
+                if (p2 != std::string::npos) {
+                    std::string cand = git.substr(0, p2) + "\\bin\\bash.exe";
+                    if (GetFileAttributesA(cand.c_str()) != INVALID_FILE_ATTRIBUTES) return cand;
+                }
+            }
+        }
+        n = SearchPathA(nullptr, "bash.exe", nullptr, MAX_PATH, buf, nullptr);
+        if (n > 0 && n < MAX_PATH) return std::string(buf, n);
+        return name;
+    }
+    return name;  // third-party: let CreateProcess search PATH
+}
+
+// build_cmdline quotes argv for CreateProcessA (CommandLineToArgvW rules).
+inline std::string win_quote(const std::string& s) {
+    std::string r = "\"";
+    size_t i = 0;
+    while (i < s.size()) {
+        size_t bs = 0;
+        while (i < s.size() && s[i] == '\\') { ++bs; ++i; }
+        if (i == s.size()) { r.append(bs * 2, '\\'); break; }
+        if (s[i] == '"') { r.append(bs * 2 + 1, '\\'); r += '"'; ++i; }
+        else { r.append(bs, '\\'); r += s[i]; ++i; }
+    }
+    r += "\"";
+    return r;
+}
+inline std::string build_cmdline(const std::vector<std::string>& argv) {
+    std::string out;
+    for (size_t i = 0; i < argv.size(); ++i) {
+        if (i) out += " ";
+        out += win_quote(argv[i]);
+    }
+    return out;
+}
+
+// spawn_inherit runs a one-shot command with the parent's stdio.
+inline int spawn_inherit(const std::vector<std::string>& argv) {
+    std::vector<std::string> a = argv;
+    a[0] = resolve_shell_exe(argv[0]);
+    std::string cmdline = build_cmdline(a);
+    std::vector<char> buf(cmdline.begin(), cmdline.end());
+    buf.push_back('\0');
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    HANDLE self = GetCurrentProcess();
+    HANDLE in = nullptr, out = nullptr, err = nullptr;
+    HANDLE s_in = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE s_out = GetStdHandle(STD_OUTPUT_HANDLE);
+    HANDLE s_err = GetStdHandle(STD_ERROR_HANDLE);
+    if (s_in != nullptr && s_in != INVALID_HANDLE_VALUE)
+        DuplicateHandle(self, s_in, self, &in, 0, TRUE, DUPLICATE_SAME_ACCESS);
+    if (s_out != nullptr && s_out != INVALID_HANDLE_VALUE)
+        DuplicateHandle(self, s_out, self, &out, 0, TRUE, DUPLICATE_SAME_ACCESS);
+    if (s_err != nullptr && s_err != INVALID_HANDLE_VALUE)
+        DuplicateHandle(self, s_err, self, &err, 0, TRUE, DUPLICATE_SAME_ACCESS);
+    si.hStdInput = in ? in : s_in;
+    si.hStdOutput = out ? out : s_out;
+    si.hStdError = err ? err : s_err;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&pi, sizeof(pi));
+    BOOL ok = CreateProcessA(nullptr, buf.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi);
+    if (in) CloseHandle(in);
+    if (out) CloseHandle(out);
+    if (err) CloseHandle(err);
+    if (!ok) throw std::runtime_error("hire::sh: cannot start shell (CreateProcess failed)");
+    CloseHandle(pi.hThread);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 0;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    return (int)code;
+}
+
+inline std::unique_ptr<shell_instance> start_instance(const std::string& name) {
+    std::vector<std::string> argv = persistent_argv(name);
+    std::vector<std::string> a = argv;
+    a[0] = resolve_shell_exe(argv[0]);
+    std::string cmdline = build_cmdline(a);
+    std::vector<char> buf(cmdline.begin(), cmdline.end());
+    buf.push_back('\0');
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = nullptr;
+    sa.bInheritHandle = TRUE;
+    HANDLE in_r = nullptr, in_w = nullptr, out_r = nullptr, out_w = nullptr;
+    if (!CreatePipe(&in_r, &in_w, &sa, 0)) throw std::runtime_error("hire::sh: CreatePipe failed");
+    if (!CreatePipe(&out_r, &out_w, &sa, 0)) {
+        CloseHandle(in_r); CloseHandle(in_w);
+        throw std::runtime_error("hire::sh: CreatePipe failed");
+    }
+    SetHandleInformation(in_w, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = in_r;
+    si.hStdOutput = out_w;
+    HANDLE err_src = GetStdHandle(STD_ERROR_HANDLE);
+    HANDLE err = err_src;
+    bool err_fresh = false;
+    if (err_src != nullptr && err_src != INVALID_HANDLE_VALUE &&
+        DuplicateHandle(GetCurrentProcess(), err_src, GetCurrentProcess(), &err, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+        err_fresh = true;
+    }
+    si.hStdError = err;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&pi, sizeof(pi));
+    BOOL ok = CreateProcessA(nullptr, buf.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi);
+    CloseHandle(in_r);
+    CloseHandle(out_w);
+    if (err_fresh && err) CloseHandle(err);
+    if (!ok) {
+        CloseHandle(in_w); CloseHandle(out_r);
+        throw std::runtime_error("hire::sh: cannot start persistent shell (CreateProcess failed)");
+    }
+    CloseHandle(pi.hThread);
+    std::unique_ptr<shell_instance> inst(new shell_instance());
+    inst->name = name;
+    inst->in_w = (void*)in_w;
+    inst->out_r = (void*)out_r;
+    inst->proc = (void*)pi.hProcess;
+    if (name == "pwsh") inst->write_all("$LASTEXITCODE = 0\n");  // seed (ctx.go:309-313)
+    return inst;
+}
+#else
+inline int spawn_inherit(const std::vector<std::string>& argv) {
+    std::vector<char*> cargv;
+    for (size_t i = 0; i < argv.size(); ++i) cargv.push_back(const_cast<char*>(argv[i].c_str()));
+    cargv.push_back(nullptr);
+    pid_t pid = ::fork();
+    if (pid < 0) throw std::runtime_error("hire::sh: fork failed");
+    if (pid == 0) {
+        ::execvp(cargv[0], cargv.data());
+        ::_exit(127);
+    }
+    int status = 0;
+    for (;;) {
+        pid_t r = ::waitpid(pid, &status, 0);
+        if (r == pid || (r < 0 && errno != EINTR)) break;
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+}
+
+inline std::unique_ptr<shell_instance> start_instance(const std::string& name) {
+    std::vector<std::string> argv = persistent_argv(name);
+    std::vector<char*> cargv;
+    for (size_t i = 0; i < argv.size(); ++i) cargv.push_back(const_cast<char*>(argv[i].c_str()));
+    cargv.push_back(nullptr);
+    int in_pipe[2], out_pipe[2];
+    if (::pipe(in_pipe) != 0) throw std::runtime_error("hire::sh: pipe failed");
+    if (::pipe(out_pipe) != 0) {
+        ::close(in_pipe[0]); ::close(in_pipe[1]);
+        throw std::runtime_error("hire::sh: pipe failed");
+    }
+    pid_t pid = ::fork();
+    if (pid < 0) {
+        ::close(in_pipe[0]); ::close(in_pipe[1]);
+        ::close(out_pipe[0]); ::close(out_pipe[1]);
+        throw std::runtime_error("hire::sh: fork failed");
+    }
+    if (pid == 0) {
+        ::dup2(in_pipe[0], STDIN_FILENO);
+        ::dup2(out_pipe[1], STDOUT_FILENO);
+        ::close(in_pipe[0]); ::close(in_pipe[1]);
+        ::close(out_pipe[0]); ::close(out_pipe[1]);
+        ::execvp(cargv[0], cargv.data());
+        ::_exit(127);
+    }
+    ::close(in_pipe[0]); ::close(out_pipe[1]);
+    std::unique_ptr<shell_instance> inst(new shell_instance());
+    inst->name = name;
+    inst->in_fd = in_pipe[1];
+    inst->out_fd = out_pipe[0];
+    inst->pid = (long)pid;
+    if (name == "pwsh") inst->write_all("$LASTEXITCODE = 0\n");  // seed (ctx.go:309-313)
+    return inst;
+}
+#endif
+
+inline std::map<inst_key, std::unique_ptr<shell_instance> >& instances() {
+    static std::map<inst_key, std::unique_ptr<shell_instance> > m;
+    return m;
+}
+
+inline std::vector<std::string>& export_buf() { static std::vector<std::string> b; return b; }
+inline bool& warned() { static bool w = false; return w; }
+inline bool& exporting() { static bool e = false; return e; }
+inline std::string& export_shell() { static std::string s; return s; }
+
+inline bool stdout_is_tty() {
+#ifdef _WIN32
+    DWORD mode = 0;
+    return GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &mode) != 0;
+#else
+    return ::isatty(STDOUT_FILENO) != 0;
+#endif
+}
+
+// shell_degrades: third-party shells and pwsh-on-Unix cannot host a
+// persistent stdin instance (ctx.go:239-260).
+inline bool shell_degrades(const std::string& name) {
+    if (!is_builtin(name)) return true;
+#ifndef _WIN32
+    if (name == "pwsh") return true;
+#endif
+    return false;
+}
+
+inline void degrade_warn(const std::string& name) {
+    if (warned()) return;
+    warned() = true;
+    if (!is_builtin(name))
+        std::cerr << "hire: warning: shell \"" << name << "\" does not support persistent instances; running one-shot\n";
+    else
+        std::cerr << "hire: warning: pwsh persistent instances are Windows-only; running one-shot\n";
+}
+
+inline void spawn_oneshot(const std::string& name, const std::string& cmd) {
+    const int rc = spawn_inherit(oneshot_argv(name, cmd));
+    if (rc != 0) throw std::runtime_error("hire::sh: command failed (exit " + std::to_string(rc) + "): " + cmd);
+}
+
+inline void collect_export(const std::string& cmd, const std::string& name) {
+    if (!is_builtin(name))
+        throw std::runtime_error("hire::sh: instance=0 (export mode) needs a builtin shell (pwsh/bash/sh), got " + name);
+    if (!exporting()) { exporting() = true; export_shell() = name; }
+    export_buf().push_back(cmd);
+}
+
+inline void run_persistent(const std::string& cmd, const std::string& name, int inst) {
+    inst_key key;
+    key.inst = inst;
+    key.shell = name;
+    std::map<inst_key, std::unique_ptr<shell_instance> >& m = instances();
+    std::map<inst_key, std::unique_ptr<shell_instance> >::iterator it = m.find(key);
+    if (it == m.end()) {
+        std::unique_ptr<shell_instance> p = start_instance(name);
+        it = m.emplace(key, std::move(p)).first;
+    }
+    int rc;
+    try {
+        rc = it->second->send(cmd);
+    } catch (...) {
+        m.erase(it);   // crashed instance: destructor tears it down; next call restarts
+        throw;
+    }
+    if (rc != 0) throw std::runtime_error("hire::sh: command failed (exit " + std::to_string(rc) + "): " + cmd);
+}
+
+inline void close_instances() {
+    instances().clear();   // ~shell_instance tears each one down (idempotent)
+}
+
+struct instance_guard {
+    ~instance_guard() { close_instances(); }
+};
+
+}  // namespace detail
+
+// sh runs a command in a shell (see the ported protocol above).
+// inst: 1 = default persistent instance (reused by (inst, shell));
+//       2+ = a separate persistent instance; 0 = export mode (collect only).
+// shell: optional builtin shell name; a "name:" prefix on cmd forces one-shot.
+inline void sh(const std::string& cmd, int inst = 1, const std::string& shell = "") {
+    std::string pname, rest;
+    if (detail::split_shell_prefix(cmd, pname, rest)) {
+        detail::spawn_oneshot(pname, rest);   // builtin shell: prefix -> one-shot
+        return;
+    }
+    const std::string name = shell.empty() ? detail::default_shell_name() : shell;
+    if (inst == 0) {
+        detail::collect_export(cmd, name);
+        return;
+    }
+    if (!shell.empty()) {
+        // An explicit shell is an explicit request not to persist.
+        if (detail::shell_degrades(name)) detail::degrade_warn(name);
+        detail::spawn_oneshot(name, cmd);
+        return;
+    }
+    if (detail::shell_degrades(name)) {   // third-party / pwsh-on-Unix
+        detail::degrade_warn(name);
+        detail::spawn_oneshot(name, cmd);
+        return;
+    }
+    detail::run_persistent(cmd, name, inst);
+}
 
 // json_str renders s as a quoted JSON string with escapes.
 inline std::string json_str(const std::string& s) {
@@ -678,8 +1232,17 @@ inline int dispatch(registry& reg, int argc, char** argv) {
                 return 1;
             }
             const char* env = std::getenv("HIRE_ARGS");
-            reg.tasks[t].body(args::parse(env != nullptr ? env : "{}"));
-            return 0;
+            bool ok = true;
+            try {
+                reg.tasks[t].body(args::parse(env != nullptr ? env : "{}"));
+            } catch (const std::exception& e) {
+                std::cerr << e.what() << "\n";
+                ok = false;
+            } catch (...) {
+                std::cerr << "hire: unknown error in task " << name << "\n";
+                ok = false;
+            }
+            return ok ? 0 : 1;
         }
         std::cerr << "hire: unknown task " << name << "\n";
         return 1;
@@ -696,6 +1259,7 @@ inline int dispatch(registry& reg, int argc, char** argv) {
 void hire_main(hire::registry& reg);
 
 int main(int argc, char** argv) {
+    hire::detail::instance_guard guard;   // RAII: tear down persistent shells on every exit path
     hire::registry reg;
     hire_main(reg);
     return hire::dispatch(reg, argc, argv);
@@ -717,3 +1281,27 @@ void hire_main(hire::registry& reg) {
         });
 }
 ```
+
+### C++ 函数形式：`hire::sh`（shell 实例，v2.2.0）
+
+函数形式文件也可 `#include "hire.hpp"`（头由 hire 写进缓存目录、discover 与 compile 两阶段注入 `-I`，见上），用内嵌 SDK 的 `hire::sh` 获得与 Lua `x.sh` 对等的 shell 实例能力——用户侧只多这一行 include：
+
+```cpp
+#include "hire.hpp"
+// desc: demo
+void demo() {
+    hire::sh("cd /tmp");        // 默认实例 1，状态跨调用存活
+    hire::sh("export FOO=42");
+    hire::sh("echo $FOO");      // 42
+    hire::sh("echo other", 2);  // 2 号新实例，状态隔离
+}
+```
+
+签名 `void sh(const std::string& cmd, int inst = 1, const std::string& shell = "")`（全文见上）。语义照移植 `internal/runtime/ctx.go` 的 Lua 协议：
+
+- **持久实例**：默认 `inst=1`，同一 `(inst, shell)` 复用同一 shell 子进程，`cd`/`export`/`set` 跨调用存活；`inst=2+` 另起隔离实例。每条命令后写哨兵 `__HIRE_RC:<nonce>:<rc>`，逐行扫 stdout 取退出码，哨兵行本身不透传；命令非零退出抛异常。
+- **`shell:` 前缀**：`bash:`/`sh:`/`pwsh:` 强制 one-shot（仅内置名可识别，`C:\path` 不会被误判）；`sh` 的 `shell` 参数可指定内置 shell，显式 shell 一律不持久化。
+- **降级**：第三方 shell 名（C++ 进程拿不到 config.lua 的 registry）与 Unix 上的 pwsh 无法承载持久 stdin 实例，降级为 one-shot 并只警告一次。Windows 上 `bash` 特意解析为 Git Bash，避开 PATH 上的 WSL 启动器 `C:\Windows\System32\bash.exe`。
+- **默认 shell 自检**：C++ 是 one-shot 子进程，hire 只下发 `HIRE_ARGS`，拿不到 Lua 侧的 `ShellName`/registry；SDK 自行探测——Windows 默认 `pwsh`、Unix 默认 `bash`（可用环境变量 `HIRE_SHELL` 覆盖为任一内置名）。这是与 Lua 唯一有意的 registry 分歧。
+- **生命周期与错误**：`main()` 放 RAII 守卫，析构时 `close_instances()`（关 stdin、等待、超时 kill），异常与正常返回都 teardown，不留孤儿 shell；`dispatch` 的 run 分支 try/catch 把异常转成干净的非零退出码（由 hire 报 `task <name> failed (exit N)`）。discover 分支保持纯，不创建实例。
+- **平台**：`#ifdef _WIN32` 用 `CreatePipe`+`CreateProcess`（pwsh 播种 `$LASTEXITCODE = 0`、哨兵用 `$?` 兜底），否则 `pipe`+`fork`+`execvp`；零第三方依赖、零内置解释器。
