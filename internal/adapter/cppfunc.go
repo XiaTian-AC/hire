@@ -459,11 +459,17 @@ const cppfuncParseTimeout = 60 * time.Second
 // taskfile and extracts its task functions. The AST stream is decoded
 // incrementally, so even header-heavy dumps stay memory-bounded.
 // Syntax errors surface clang's own diagnostics, which name the user's
-// real file:line.
-func parseFuncForm(srcPath, clangCmd string) ([]FuncTask, error) {
+// real file:line. incDir, when set, is passed as -I so the user's
+// #include "hire.hpp" resolves during discovery.
+func parseFuncForm(srcPath, clangCmd, incDir string) ([]FuncTask, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cppfuncParseTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, clangCmd, "-Xclang", "-ast-dump=json", "-fsyntax-only", "-fparse-all-comments", srcPath)
+	argv := []string{"-Xclang", "-ast-dump=json", "-fsyntax-only", "-fparse-all-comments"}
+	if incDir != "" {
+		argv = append(argv, "-I"+incDir)
+	}
+	argv = append(argv, srcPath)
+	cmd := exec.CommandContext(ctx, clangCmd, argv...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -584,6 +590,12 @@ func cxxStr(s string) string {
 	return b.String()
 }
 
+// writeCppHeader emits the SDK header into dir so both the clang parse
+// (-I<dir>) and the generated wrapper's include resolve "hire.hpp".
+func writeCppHeader(dir string) error {
+	return os.WriteFile(filepath.Join(dir, "hire.hpp"), []byte(CppHeaderTemplate), 0o644)
+}
+
 // genWrapper writes the hire.hpp SDK and the generated wrapper TU into
 // outDir - the compile-cache directory, never beside the user's file -
 // and returns the wrapper path. The wrapper includes the user's
@@ -595,7 +607,7 @@ func genWrapper(srcPath, outDir string, tasks []FuncTask) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "hire.hpp"), []byte(CppHeaderTemplate), 0o644); err != nil {
+	if err := writeCppHeader(outDir); err != nil {
 		return "", err
 	}
 	var b strings.Builder
@@ -748,7 +760,15 @@ func loadCppFuncForm(path, rtName string, spec RuntimeSpec, src []byte) (*File, 
 	if perr := ensureParserFound(parser); perr != nil {
 		return nil, fmt.Errorf("%s: configured %v", path, perr)
 	}
-	tasks, err := parseFuncForm(path, parser)
+	// The header must exist before clang parses, so the user's
+	// #include "hire.hpp" resolves through -I<dir> during discovery.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := writeCppHeader(dir); err != nil {
+		return nil, err
+	}
+	tasks, err := parseFuncForm(path, parser, dir)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", path, err)
 	}
@@ -758,14 +778,11 @@ func loadCppFuncForm(path, rtName string, spec RuntimeSpec, src []byte) (*File, 
 	if verr := validateFuncTasks(path, tasks); verr != nil {
 		return nil, verr
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
 	wrapper, err := genWrapper(path, dir, tasks)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := buildIfMissing(exe, wrapper, spec.Build, path); err != nil {
+	if _, err := buildIfMissing(exe, wrapper, spec.Build, path, dir); err != nil {
 		return nil, err
 	}
 	stdout, stderr, err := runDiscover(exe, nil)

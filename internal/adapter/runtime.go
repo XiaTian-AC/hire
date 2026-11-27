@@ -143,16 +143,19 @@ func ensureCompiled(path, rtName string, spec RuntimeSpec) (string, error) {
 		return "", err
 	}
 	exe := filepath.Join(base, "hire", rtName, cacheKey(src, spec.Build)+".exe")
-	return buildIfMissing(exe, path, spec.Build, path)
+	return buildIfMissing(exe, path, spec.Build, path, "")
 }
 
 // buildIfMissing stats exePath and, on a miss, runs the build template
 // through the user's default shell. srcForCmd is the {src} argument —
 // the user's taskfile on the raw contract path, hire's generated wrapper
 // for the C++ function form; displayPath names the taskfile in errors.
+// incDir, when set (function form only), is appended as an extra -I so
+// the user's #include "hire.hpp" resolves at compile time; "" (raw path)
+// adds nothing.
 // shortcut: the cache is never pruned (disk grows with distinct source
 // contents + build strings); add a `hire cache clean` when it matters.
-func buildIfMissing(exePath, srcForCmd, build, displayPath string) (string, error) {
+func buildIfMissing(exePath, srcForCmd, build, displayPath, incDir string) (string, error) {
 	if st, err := os.Stat(exePath); err == nil && !st.IsDir() {
 		return exePath, nil
 	}
@@ -164,6 +167,9 @@ func buildIfMissing(exePath, srcForCmd, build, displayPath string) (string, erro
 		return "", fmt.Errorf("%s: build: %v", displayPath, err)
 	}
 	cmdStr := expandBuild(build, exePath, srcForCmd)
+	if incDir != "" {
+		cmdStr += ` -I"` + incDir + `"`
+	}
 	buildCmd := exec.Command(sh.Path, sh.Argv(cmdStr)...)
 	var out bytes.Buffer
 	buildCmd.Stdout = &out

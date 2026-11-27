@@ -486,3 +486,38 @@ void hire_main(hire::registry& reg) {
 		t.Errorf("decoded args = %q, want %q", string(got), want)
 	}
 }
+
+// TestCppFuncFormIncludeResolves pins the two-phase include visibility
+// (spec §5.2): a function-form file that includes "hire.hpp" must resolve
+// the header during BOTH the clang discover parse and the g++ compile.
+// hire writes the SDK header into its cache dir before parsing and injects
+// -I<dir> into both commands; without them clang/g++ report "hire.hpp:
+// No such file". The cache dir deliberately has spaces/non-ASCII to also
+// exercise the -I quoting. Skipped when the toolchains are absent.
+func TestCppFuncFormIncludeResolves(t *testing.T) {
+	clang := probeCmd(t, "clang++", "clang")
+	probeCmd(t, "g++")
+	spacedCacheDir(t)
+	srcDir := filepath.Join(t.TempDir(), "sdk include src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(srcDir, "Taskfile.cpp")
+	src := `#include "hire.hpp"
+
+// desc: resolve sdk include
+void hello() {}
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := adapter.RuntimeSpec{Build: "g++ -std=c++20 -O2 -o {out} {src}", Parser: clang}
+	f, err := adapter.LoadExec(path, spec, "cpp")
+	if err != nil {
+		t.Fatalf("function-form file including hire.hpp failed to load (header not visible to discover/compile): %v", err)
+	}
+	t.Cleanup(f.Close)
+	if _, ok := f.Tasks["hello"]; !ok {
+		t.Fatalf("hello task missing; tasks = %v", f.Order)
+	}
+}
