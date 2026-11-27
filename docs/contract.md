@@ -991,6 +991,32 @@ inline void collect_export(const std::string& cmd, const std::string& name) {
     export_buf().push_back(cmd);
 }
 
+// finish_export flushes the instance=0 buffer at task end: joined to
+// stdout on success, discarded with a stderr note on failure; a TTY hint
+// tells the user how to eval/iex it (ctx.go:405-426).
+inline void finish_export(const std::string& name, bool ok) {
+    std::vector<std::string>& buf = export_buf();
+    if (buf.empty()) return;
+    if (!ok) {
+        buf.clear();
+        std::cerr << "hire: task failed; export aborted, collected commands discarded\n";
+        return;
+    }
+    std::string joined;
+    for (size_t i = 0; i < buf.size(); ++i) {
+        if (i) joined += "\n";
+        joined += buf[i];
+    }
+    std::cout << joined << "\n";
+    buf.clear();
+    if (stdout_is_tty()) {
+        if (export_shell() == "pwsh")
+            std::cerr << "\u63d0\u793a: \u6b64\u4efb\u52a1\u5305\u542b instance=0 \u547d\u4ee4\u3002\u8bf7\u4f7f\u7528: iex (hire " << name << ")\n";
+        else
+            std::cerr << "\u63d0\u793a: \u6b64\u4efb\u52a1\u5305\u542b instance=0 \u547d\u4ee4\u3002\u8bf7\u4f7f\u7528: eval \"$(hire " << name << ")\"\n";
+    }
+}
+
 inline void run_persistent(const std::string& cmd, const std::string& name, int inst) {
     inst_key key;
     key.inst = inst;
@@ -1242,6 +1268,7 @@ inline int dispatch(registry& reg, int argc, char** argv) {
                 std::cerr << "hire: unknown error in task " << name << "\n";
                 ok = false;
             }
+            detail::finish_export(name, ok);   // both success and failure paths
             return ok ? 0 : 1;
         }
         std::cerr << "hire: unknown task " << name << "\n";
@@ -1305,3 +1332,4 @@ void demo() {
 - **默认 shell 自检**：C++ 是 one-shot 子进程，hire 只下发 `HIRE_ARGS`，拿不到 Lua 侧的 `ShellName`/registry；SDK 自行探测——Windows 默认 `pwsh`、Unix 默认 `bash`（可用环境变量 `HIRE_SHELL` 覆盖为任一内置名）。这是与 Lua 唯一有意的 registry 分歧。
 - **生命周期与错误**：`main()` 放 RAII 守卫，析构时 `close_instances()`（关 stdin、等待、超时 kill），异常与正常返回都 teardown，不留孤儿 shell；`dispatch` 的 run 分支 try/catch 把异常转成干净的非零退出码（由 hire 报 `task <name> failed (exit N)`）。discover 分支保持纯，不创建实例。
 - **平台**：`#ifdef _WIN32` 用 `CreatePipe`+`CreateProcess`（pwsh 播种 `$LASTEXITCODE = 0`、哨兵用 `$?` 兜底），否则 `pipe`+`fork`+`execvp`；零第三方依赖、零内置解释器。
+- **导出模式（`inst=0`）**：命令只收集进缓冲、不执行也不写哨兵。任务成功时由 `dispatch` 的 run 分支调用 `detail::finish_export(name, true)`，把收集的命令用 `\n` 连接一次性打到 stdout（stdout 是 TTY 时另在 stderr 给 `eval "$(hire <name>)"` / pwsh 的 `iex (hire <name>)` 提示）；任务失败（含 `sh()` 抛异常）则调用 `finish_export(name, false)` 丢弃缓冲并在 stderr 提示。成功/失败两条路径都会调用——`sh()` 会抛异常，普通的“dispatch 之后再刷”写法会被跳过，所以钩子必须放在 try/catch 的两个分支里。用户自己的 `std::cout` 不经过这条改道（与 Lua `x.echo` 不同）。

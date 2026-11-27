@@ -822,6 +822,32 @@ inline void collect_export(const std::string& cmd, const std::string& name) {
     export_buf().push_back(cmd);
 }
 
+// finish_export flushes the instance=0 buffer at task end: joined to
+// stdout on success, discarded with a stderr note on failure; a TTY hint
+// tells the user how to eval/iex it (ctx.go:405-426).
+inline void finish_export(const std::string& name, bool ok) {
+    std::vector<std::string>& buf = export_buf();
+    if (buf.empty()) return;
+    if (!ok) {
+        buf.clear();
+        std::cerr << "hire: task failed; export aborted, collected commands discarded\n";
+        return;
+    }
+    std::string joined;
+    for (size_t i = 0; i < buf.size(); ++i) {
+        if (i) joined += "\n";
+        joined += buf[i];
+    }
+    std::cout << joined << "\n";
+    buf.clear();
+    if (stdout_is_tty()) {
+        if (export_shell() == "pwsh")
+            std::cerr << "\u63d0\u793a: \u6b64\u4efb\u52a1\u5305\u542b instance=0 \u547d\u4ee4\u3002\u8bf7\u4f7f\u7528: iex (hire " << name << ")\n";
+        else
+            std::cerr << "\u63d0\u793a: \u6b64\u4efb\u52a1\u5305\u542b instance=0 \u547d\u4ee4\u3002\u8bf7\u4f7f\u7528: eval \"$(hire " << name << ")\"\n";
+    }
+}
+
 inline void run_persistent(const std::string& cmd, const std::string& name, int inst) {
     inst_key key;
     key.inst = inst;
@@ -1073,6 +1099,7 @@ inline int dispatch(registry& reg, int argc, char** argv) {
                 std::cerr << "hire: unknown error in task " << name << "\n";
                 ok = false;
             }
+            detail::finish_export(name, ok);   // both success and failure paths
             return ok ? 0 : 1;
         }
         std::cerr << "hire: unknown task " << name << "\n";
