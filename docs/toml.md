@@ -20,6 +20,16 @@ cmds = ["rm -rf dist/"]                 # 单条可写 cmd = "..."（别名）
 desc = "compile the app"
 cmd = "g++ -O2 -o app main.cpp"
 
+[tasks.serve]
+desc = "serve with defaults"
+cmd = "echo port={{port}} verbose={{verbose:+--verbose}}"
+[tasks.serve.args.port]
+type = "num"
+default = 8080
+[tasks.serve.args.verbose]
+type = "bool"
+default = true
+
 [tasks.release]
 desc = "tag, build, push"
 deps = ["build"]                        # 先跑 build，再跑本体
@@ -48,8 +58,9 @@ when = { os = "windows" }                # 不匹配平台 = 任务不存在
 | `tasks.<name>.cmds` | string[] | 命令序列，按序执行 |
 | `tasks.<name>.deps` | string[] | 本文件内的前置任务（见下） |
 | `tasks.<name>.args.<arg>.type` | string | `"string"`（缺省）/ `"bool"` / `"num"` |
-| `tasks.<name>.args.<arg>.required` | bool | 缺省 false |
+| `tasks.<name>.args.<arg>.required` | bool | 缺省 false；与 `default` 互斥 |
 | `tasks.<name>.args.<arg>.desc` | string | |
+| `tasks.<name>.args.<arg>.default` | string / bool / num | 未传时的渲染值；类型须与 `type` 一致；有默认值即视为可选 |
 | `tasks.<name>.when.os` | string 或 string[] | 平台过滤 |
 
 `cmd` 与 `cmds` 等价但互斥：并存或两者皆缺 → 加载期报错（文件名 +
@@ -63,16 +74,20 @@ when = { os = "windows" }                # 不匹配平台 = 任务不存在
 
 1. **`{{name}}`（string / num）**：原文替换。值里含空格需自加引号——
    `{{msg}}` 不会替你转义；num 按最短数字形式渲染（`--port 8080` 是
-   `8080`，不是 `8080.000000`）。可选参数未传 → 替换为空串。
+   `8080`，不是 `8080.000000`）。可选参数未传：有 `default` 则用默认值
+   （string 原文、num 最短形式），否则替换为空串。
 2. **`{{flag:+word}}`（bool）**：真值时插入 `word`，假值 / 未传时插入
-   空串（Make 的 `$(VAR:+word)` 血统）。
+   空串（Make 的 `$(VAR:+word)` 血统）；`default = true` 且未传 → 一直
+   插入 `word`。显式传参始终覆盖默认值。
 
-边界（全部加载期报错，点名文件 + 任务 + 占位符）：
+边界（全部加载期报错，点名文件 + 任务 + 占位符或参数）：
 
 - `{{typo}}` 未声明 → 报错；`{{ }}` 空名同未声明报错
 - 条件形式只对 bool 参数合法，用在 string / num 上 → 报错
 - bool 参数没有"原文替换"形态：`{{flag}}` → 报错，提示改用条件形式
 - `{{` 未闭合 → 报错
+- `default` 类型与 `type` 不符（如 `type = "num"` 配 `default = "8080"`）→
+  报错；`required = true` 与 `default` 并存 → 报错（有默认值即可选）
 
 `bash:` 这类 shell 前缀先切分、不参与插值（前缀命令总是 one-shot，
 机制见 [lua.md](lua.md)）：`bash:echo {{msg}}` 在 bash 里跑插值后的

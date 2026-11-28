@@ -828,3 +828,79 @@ cmd = "echo host-ran"
 		t.Errorf("output = %q, want the host body to run", out)
 	}
 }
+
+// --- arg defaults (v2.3) ---
+
+func TestTOMLDefaultUnpassed(t *testing.T) {
+	f := loadTOML(t, `
+[tasks.serve]
+cmd = "echo jobs={{jobs}} flag={{flag:+--yes}} msg={{msg}}"
+[tasks.serve.args.jobs]
+type = "num"
+default = 4
+[tasks.serve.args.flag]
+type = "bool"
+default = true
+[tasks.serve.args.msg]
+default = "hi"
+`)
+	out, err := runTOMLTask(t, f, "serve", f.L.NewTable())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "jobs=4") || strings.Contains(out, "jobs=4.0") {
+		t.Errorf("output = %q, want num default in shortest form", out)
+	}
+	if !strings.Contains(out, "--yes") {
+		t.Errorf("output = %q, want a true bool default to insert the conditional word", out)
+	}
+	if !strings.Contains(out, "msg=hi") {
+		t.Errorf("output = %q, want the string default verbatim", out)
+	}
+
+	// An explicitly passed arg still wins over its default.
+	args := f.L.NewTable()
+	args.RawSetString("jobs", lua.LNumber(9))
+	args.RawSetString("flag", lua.LBool(false))
+	args.RawSetString("msg", lua.LString("bye"))
+	out, err = runTOMLTask(t, f, "serve", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "jobs=4") || strings.Contains(out, "--yes") || strings.Contains(out, "msg=hi") {
+		t.Errorf("output = %q, explicit args must override defaults", out)
+	}
+	if !strings.Contains(out, "jobs=9") || !strings.Contains(out, "msg=bye") {
+		t.Errorf("output = %q, want the passed values rendered", out)
+	}
+}
+
+func TestTOMLDefaultTypeMismatch(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.serve]
+cmd = "echo {{port}}"
+[tasks.serve.args.port]
+type = "num"
+default = "8080"
+`)
+	for _, want := range []string{"Taskfile.toml", "serve", "port", "default", "num"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestTOMLDefaultRequiredConflict(t *testing.T) {
+	err := loadTOMLErr(t, `
+[tasks.tag]
+cmd = "echo {{tag}}"
+[tasks.tag.args.tag]
+required = true
+default = "v1"
+`)
+	for _, want := range []string{"Taskfile.toml", "tag", "required", "default"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}

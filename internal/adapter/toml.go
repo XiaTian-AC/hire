@@ -32,9 +32,10 @@ type tomlTask struct {
 }
 
 type tomlArg struct {
-	Type     string `toml:"type"` // default "string"
-	Required bool   `toml:"required"`
-	Desc     string `toml:"desc"`
+	Type     string      `toml:"type"` // default "string"
+	Required bool        `toml:"required"`
+	Desc     string      `toml:"desc"`
+	Default  interface{} `toml:"default"` // type must match Type; presence implies optional
 }
 
 type tomlWhen struct {
@@ -139,9 +140,10 @@ func LoadTOML(path string) (f *File, err error) {
 // tomlCompiled is one task after per-task validation: arg specs,
 // compiled command templates and raw dep names (file-local).
 type tomlCompiled struct {
-	specs map[string]argparse.Spec
-	cmds  []cmdTmpl
-	deps  []string
+	specs    map[string]argparse.Spec
+	defaults map[string]lua.LValue // rendered when the arg was not passed
+	cmds     []cmdTmpl
+	deps     []string
 }
 
 func compileTOMLTask(tt tomlTask, name, path string) (*tomlCompiled, error) {
@@ -162,6 +164,19 @@ func compileTOMLTask(tt tomlTask, name, path string) (*tomlCompiled, error) {
 		}
 		if !validArgType(sp.Type) {
 			return nil, fmt.Errorf("%s: task %q: arg %q: invalid type %q (use \"string\", \"bool\" or \"num\")", path, name, argName, sp.Type)
+		}
+		if a.Default != nil {
+			if a.Required {
+				return nil, fmt.Errorf("%s: task %q: arg %q: 'default' and required = true are mutually exclusive (a default makes the arg optional)", path, name, argName)
+			}
+			def, derr := tomlDefaultValue(a.Default, sp.Type)
+			if derr != nil {
+				return nil, fmt.Errorf("%s: task %q: arg %q: %v", path, name, argName, derr)
+			}
+			if tc.defaults == nil {
+				tc.defaults = make(map[string]lua.LValue)
+			}
+			tc.defaults[argName] = def
 		}
 		tc.specs[argName] = sp
 	}
@@ -184,7 +199,7 @@ func compileTOMLTask(tt tomlTask, name, path string) (*tomlCompiled, error) {
 		raw = list
 	}
 	for _, c := range raw {
-		tmpl, cerr := compileCmdTmpl(c, tc.specs)
+		tmpl, cerr := compileCmdTmpl(c, tc.specs, tc.defaults)
 		if cerr != nil {
 			return nil, fmt.Errorf("%s: task %q: %v", path, name, cerr)
 		}
@@ -192,6 +207,29 @@ func compileTOMLTask(tt tomlTask, name, path string) (*tomlCompiled, error) {
 	}
 	tc.deps = tt.Deps
 	return tc, nil
+}
+
+// tomlDefaultValue converts a TOML literal to its render-time Lua value,
+// rejecting a default whose family does not match the declared arg type.
+func tomlDefaultValue(v interface{}, typ string) (lua.LValue, error) {
+	switch typ {
+	case "string":
+		if s, ok := v.(string); ok {
+			return lua.LString(s), nil
+		}
+	case "bool":
+		if b, ok := v.(bool); ok {
+			return lua.LBool(b), nil
+		}
+	case "num":
+		switch n := v.(type) {
+		case int64:
+			return lua.LNumber(n), nil
+		case float64:
+			return lua.LNumber(n), nil
+		}
+	}
+	return nil, fmt.Errorf("default has the wrong type (arg type %q needs a %s literal)", typ, typ)
 }
 
 func tomlCmdString(v interface{}) ([]string, bool, error) {
@@ -298,11 +336,12 @@ type tmplSeg struct {
 	name string // placeholder arg name; empty for pure literals
 	word string // conditional insertion word (cond form only)
 	cond bool   // true = conditional {{name:+word}}
+	def  lua.LValue // default value used when the arg was not passed
 }
 
 // compileCmdTmpl splits the builtin shell prefix, then compiles and
 // validates every placeholder against the task's declared args.
-func compileCmdTmpl(cmd string, specs map[string]argparse.Spec) (cmdTmpl, error) {
+func compileCmdTmpl(cmd string, specs map[string]argparse.Spec, defaults map[string]lua.LValue) (cmdTmpl, error) {
 	var t cmdTmpl
 	text := cmd
 	if i := strings.Index(text, ":"); i > 0 && shell.IsBuiltin(text[:i]) {
@@ -333,7 +372,7 @@ func compileCmdTmpl(cmd string, specs map[string]argparse.Spec) (cmdTmpl, error)
 			if sp.Type != "bool" {
 				return cmdTmpl{}, fmt.Errorf("conditional placeholder {{%s}} is only for bool args (arg %q has type %q)", content, name, sp.Type)
 			}
-			t.segs = append(t.segs, tmplSeg{name: name, word: content[k+2:], cond: true})
+			t.segs = append(t.segs, tmplSeg{name: name, word: content[k+2:], cond: true, def: defaults[name]})
 			continue
 		}
 		sp, ok := specs[content]
@@ -343,29 +382,33 @@ func compileCmdTmpl(cmd string, specs map[string]argparse.Spec) (cmdTmpl, error)
 		if sp.Type == "bool" {
 			return cmdTmpl{}, fmt.Errorf("bool arg %q must use the conditional form {{%s:+word}}", content, content)
 		}
-		t.segs = append(t.segs, tmplSeg{name: content})
+		t.segs = append(t.segs, tmplSeg{name: content, def: defaults[content]})
 	}
 	return t, nil
 }
 
 // renderTmpl fills the compiled segments from the args table: strings
-// verbatim, nums in shortest form (8080, not 8080.000000), missing
-// optionals and false bools as empty text.
+// verbatim, nums in shortest form (8080, not 8080.000000), a declared
+// default when the arg was not passed, and empty text otherwise.
 func renderTmpl(t cmdTmpl, args *lua.LTable) string {
 	var b strings.Builder
 	if t.prefix != "" {
 		b.WriteString(t.prefix)
 	}
 	for _, s := range t.segs {
+		val := args.RawGetString(s.name)
+		if val == lua.LNil {
+			val = s.def
+		}
 		switch {
 		case s.name == "":
 			b.WriteString(s.lit)
 		case s.cond:
-			if bv, ok := args.RawGetString(s.name).(lua.LBool); ok && bool(bv) {
+			if bv, ok := val.(lua.LBool); ok && bool(bv) {
 				b.WriteString(s.word)
 			}
 		default:
-			switch v := args.RawGetString(s.name).(type) {
+			switch v := val.(type) {
 			case lua.LString:
 				b.WriteString(string(v))
 			case lua.LNumber:
