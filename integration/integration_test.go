@@ -691,6 +691,7 @@ void persist() {
     hire::sh("export FOO=42");
     hire::sh("echo value=$FOO");
     hire::sh("echo isolated=[$FOO]", 2);
+    hire::sh("sh:echo prefixed");   // shell: prefix forces one-shot
 }
 
 // desc: collect commands for export mode
@@ -708,8 +709,8 @@ void failing() {
 
 	out, code := runBinOpt(t, bin, work, env, "persist")
 	if code != 0 || !strings.Contains(out, "/tmp") || !strings.Contains(out, "value=42") ||
-		!strings.Contains(out, "isolated=[]") {
-		t.Fatalf("persist: code=%d out=%q (want cd+export persisted, inst 2 isolated)", code, out)
+		!strings.Contains(out, "isolated=[]") || !strings.Contains(out, "prefixed") {
+		t.Fatalf("persist: code=%d out=%q (want cd+export persisted, inst 2 isolated, shell: prefix ran)", code, out)
 	}
 	if strings.Contains(out, "__HIRE_RC") {
 		t.Fatalf("persist leaked the shell sentinel to stdout: %q", out)

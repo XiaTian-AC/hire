@@ -1052,6 +1052,7 @@ struct instance_guard {
 //       2+ = a separate persistent instance; 0 = export mode (collect only).
 // shell: optional builtin shell name; a "name:" prefix on cmd forces one-shot.
 inline void sh(const std::string& cmd, int inst = 1, const std::string& shell = "") {
+    if (inst < 0) throw std::runtime_error("hire::sh: inst must be >= 0");
     std::string pname, rest;
     if (detail::split_shell_prefix(cmd, pname, rest)) {
         detail::spawn_oneshot(pname, rest);   // builtin shell: prefix -> one-shot
