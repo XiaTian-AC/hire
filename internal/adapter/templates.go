@@ -749,6 +749,8 @@ const CppHeaderTemplate = `// hire.hpp - the hire contract SDK for C++ taskfiles
 #include <utility>
 #include <vector>
 #include <memory>
+#include <sstream>
+#include <initializer_list>
 #include <stdexcept>
 #include <cstdio>
 #include <ctime>
@@ -1403,6 +1405,23 @@ inline void sh(const std::string& cmd, int inst = 1, const std::string& shell = 
     detail::run_persistent(cmd, name, inst);
 }
 
+// echo prints its printable arguments joined with no separator and appends
+// one newline. In export mode (after a sh(cmd, 0)) stdout is reserved for
+// the eval payload, so the line goes to stderr instead (spec §3 D).
+template <typename... Ts>
+inline void echo(Ts&&... parts) {
+    std::ostringstream os;
+    (void)std::initializer_list<int>{((os << std::forward<Ts>(parts)), 0)...};
+    os << '\n';
+    if (detail::exporting()) {
+        std::cerr << os.str();
+        std::cerr.flush();
+    } else {
+        std::cout << os.str();
+        std::cout.flush();
+    }
+}
+
 // json_str renders s as a quoted JSON string with escapes.
 inline std::string json_str(const std::string& s) {
     std::string out = "\"";
@@ -1596,6 +1615,8 @@ inline int dispatch(registry& reg, int argc, char** argv) {
                 ok = false;
             }
             detail::finish_export(name, ok);   // both success and failure paths
+            detail::exporting() = false;       // the flag is task-scoped, like the export buffer
+            detail::export_shell().clear();
             return ok ? 0 : 1;
         }
         std::cerr << "hire: unknown task " << name << "\n";

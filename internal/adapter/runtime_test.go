@@ -521,3 +521,56 @@ void hello() {}
 		t.Fatalf("hello task missing; tasks = %v", f.Order)
 	}
 }
+
+// TestCppEchoExportRedirect pins spec §3 D: hire::echo writes to stdout in
+// a normal task, but to stderr once the task has entered export mode via
+// sh(cmd, 0), so the eval payload on stdout stays clean. Skipped when g++
+// is absent.
+func TestCppEchoExportRedirect(t *testing.T) {
+	probeCmd(t, "g++")
+	t.Setenv("HIRE_SHELL", "sh") // builtin on every platform; export mode never runs it
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hire.hpp"), []byte(adapter.CppHeaderTemplate), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cpp := filepath.Join(dir, "probe.cpp")
+	src := `#include "hire.hpp"
+void hire_main(hire::registry& reg) {
+    reg.task("plain").run([](const hire::args&) {
+        hire::echo("hi");
+    });
+    reg.task("exp").run([](const hire::args&) {
+        hire::sh("true", 0);
+        hire::echo("hi");
+    });
+}
+`
+	if err := os.WriteFile(cpp, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(dir, "probe.exe")
+	if out, err := exec.Command("g++", "-std=c++20", "-o", exe, cpp).CombinedOutput(); err != nil {
+		t.Fatalf("g++ build: %v\n%s", err, out)
+	}
+	run := func(task string) (string, string, error) {
+		var stdout, stderr strings.Builder
+		cmd := exec.Command(exe, "__hire__", "run", task)
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		return stdout.String(), stderr.String(), err
+	}
+	so, se, err := run("plain")
+	if err != nil {
+		t.Fatalf("plain run: %v (stdout %q stderr %q)", err, so, se)
+	}
+	if !strings.Contains(so, "hi") || strings.Contains(se, "hi") {
+		t.Errorf("normal echo: stdout %q stderr %q; want hi on stdout only", so, se)
+	}
+	so, se, err = run("exp")
+	if err != nil {
+		t.Fatalf("exp run: %v (stdout %q stderr %q)", err, so, se)
+	}
+	if strings.Contains(so, "hi") || !strings.Contains(se, "hi") {
+		t.Errorf("export echo: stdout %q stderr %q; want hi on stderr only", so, se)
+	}
+}
