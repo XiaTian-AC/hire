@@ -455,3 +455,32 @@ dispatch();
 	t.Cleanup(f.Close)
 	checkSDKWhenTasks(t, f)
 }
+
+// TestLoadLegacyNodeContract pins backward compatibility: a hand-written
+// pure-contract Node taskfile (no hire.js) still loads after init changed
+// to scaffold hire.js + Taskfile.js.
+func TestLoadLegacyNodeContract(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH")
+	}
+	dir := t.TempDir()
+	script := `const tasks = [{ name: "hello", desc: "hi", args: {} }];
+const [, , verb, action] = process.argv;
+if (verb !== "__hire__") { process.exit(1); }
+if (action === "discover") { process.stdout.write(JSON.stringify({ tasks })); process.exit(0); }
+process.exit(0);
+`
+	path := filepath.Join(dir, "Taskfile.js")
+	if err := os.WriteFile(path, []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := adapter.LoadExec(path, adapter.RuntimeSpec{Cmd: node}, "node")
+	if err != nil {
+		t.Fatalf("legacy pure-contract node taskfile must still load: %v", err)
+	}
+	t.Cleanup(f.Close)
+	if _, ok := f.Tasks["hello"]; !ok {
+		t.Errorf("legacy node tasks not discovered: %v", f.Order)
+	}
+}

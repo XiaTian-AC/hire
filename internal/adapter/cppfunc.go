@@ -440,7 +440,13 @@ func commentWhen(n *astNode) string {
 		for _, line := range strings.Split(text, "\n") {
 			line = strings.TrimSpace(line)
 			if len(line) >= 5 && strings.EqualFold(line[:5], "when:") {
-				return strings.TrimSpace(line[5:])
+				// A guard is a single os token; prose like "when: the build
+				// finishes" contains spaces and is ignored, while a typo
+				// ("windwos") stays a guard so it errors loudly.
+				osName := strings.TrimSpace(line[5:])
+				if osName != "" && !strings.ContainsAny(osName, " \t") {
+					return osName
+				}
 			}
 		}
 	}

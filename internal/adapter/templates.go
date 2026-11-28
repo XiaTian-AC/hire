@@ -452,6 +452,10 @@ function num(desc) { return { type: "num", required: false, desc: desc || "" }; 
 // collects commands for eval/iex. Commands are queued to the child in
 // call order; the sentinel line carries the exit code and is never
 // printed. dispatch drains every instance before the process exits.
+// LIMIT (Windows pipes have no sync fd): a non-zero command surfaces as
+// an uncaught Error -> process exit 1 (NOT catchable, unlike C++/Lua/Python),
+// and commands already queued still run. Recover from failure by fixing
+// the command, not by try/catch.
 
 const BUILTIN_SHELLS = ["pwsh", "bash", "sh"];
 const _instances = new Map();     // key: instance + ":" + shell
@@ -658,7 +662,9 @@ class Shell {
     }
     const key = inst + ":" + name;
     let child = _instances.get(key);
-    if (!child) {
+    // A closed/exited instance must not swallow the next command: treat it
+    // as a cache miss and spawn a fresh shell (Python clears its map too).
+    if (!child || child.closed || child.exited) {
       child = new ShellInstance(name);
       _instances.set(key, child);
     }
@@ -1541,8 +1547,12 @@ inline void sh(const std::string& cmd, int inst = 1, const std::string& shell = 
 // on the terminal and a non-zero exit throws. It never reuses a persistent
 // instance: capture and state are deliberately orthogonal (spec §3 F).
 inline std::string sh_out(const std::string& cmd) {
+    std::string pname, rest;
+    const bool pref = detail::split_shell_prefix(cmd, pname, rest);
+    const std::string name = pref ? pname : detail::default_shell_name();
+    const std::string& target = pref ? rest : cmd;
     int rc = 0;
-    const std::string raw = detail::capture_output(detail::default_shell_name(), cmd, rc);
+    const std::string raw = detail::capture_output(name, target, rc);
     if (rc != 0) throw std::runtime_error("hire::sh_out: command failed (exit " + std::to_string(rc) + "): " + cmd);
     std::string out = raw;
     if (!out.empty() && out[out.size() - 1] == '\n') {

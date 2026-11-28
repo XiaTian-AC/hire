@@ -512,7 +512,7 @@ if __name__ == "__main__":
 
 ### Node（hire.js + Taskfile.js，无装饰器 SDK）
 
-`hire init --lang node` 生成两个文件：`hire.js`（契约 SDK——__hire__ 分发、discover JSON 输出、HIRE_ARGS 解析收在 SDK 模块里）和只含任务本体的瘦 `Taskfile.js`。声明助手：`opt`/`req`（string，可选/必填）、`flag`（bool）、`num`（数字，dispatch 时转 Number）；`a.name` 属性访问，`a._` 为位置参数数组。平台过滤用 `task("x", { desc: "...", args: {...}, when: { os: "windows" } }, fn)`（或 `when: { os: ["linux","darwin"] }`）。手写裸单文件契约程序同样合法——SDK 只是便利品，不引入任何私有机制。 `Shell` 用法：`new Shell()` 后 `run(cmd, instance, shell)` 按 (instance, shell) 复用持久实例；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；同一持久实例内命令按调用顺序执行（one-shot 输出即时写出），哨兵不外泄、非零退出以未捕获异常终止（exit 1），`close()` 与 `process.on('exit')` 保证无孤儿。 `Shell` 用法：`new Shell()` 后 `run(cmd, instance, shell)` 按 (instance, shell) 复用持久实例；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；命令按调用顺序执行，哨兵不外泄、非零退出抛错，`close()` 与 `process.on('exit')` 保证无孤儿。`sh.out(cmd)` 一次性捕获 stdout 为字符串（去一个尾换行、CRLF 连 `\r` 一起），stderr 透传、非零退出抛错，不复用持久实例。
+`hire init --lang node` 生成两个文件：`hire.js`（契约 SDK——__hire__ 分发、discover JSON 输出、HIRE_ARGS 解析收在 SDK 模块里）和只含任务本体的瘦 `Taskfile.js`。声明助手：`opt`/`req`（string，可选/必填）、`flag`（bool）、`num`（数字，dispatch 时转 Number）；`a.name` 属性访问，`a._` 为位置参数数组。平台过滤用 `task("x", { desc: "...", args: {...}, when: { os: "windows" } }, fn)`（或 `when: { os: ["linux","darwin"] }`）。手写裸单文件契约程序同样合法——SDK 只是便利品，不引入任何私有机制。 `Shell` 用法：`new Shell()` 后 `run(cmd, instance, shell)` 按 (instance, shell) 复用持久实例；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；同一持久实例内命令按调用顺序执行（one-shot 输出即时写出），哨兵不外泄、非零退出以未捕获异常终止（exit 1），`close()` 与 `process.on('exit')` 保证无孤儿。`sh.out(cmd)` 一次性捕获 stdout 为字符串（去一个尾换行、CRLF 连 `\r` 一起），stderr 透传、非零退出抛错，不复用持久实例。
 
 `hire.js`：
 
@@ -569,6 +569,10 @@ function num(desc) { return { type: "num", required: false, desc: desc || "" }; 
 // collects commands for eval/iex. Commands are queued to the child in
 // call order; the sentinel line carries the exit code and is never
 // printed. dispatch drains every instance before the process exits.
+// LIMIT (Windows pipes have no sync fd): a non-zero command surfaces as
+// an uncaught Error -> process exit 1 (NOT catchable, unlike C++/Lua/Python),
+// and commands already queued still run. Recover from failure by fixing
+// the command, not by try/catch.
 
 const BUILTIN_SHELLS = ["pwsh", "bash", "sh"];
 const _instances = new Map();     // key: instance + ":" + shell
@@ -775,7 +779,9 @@ class Shell {
     }
     const key = inst + ":" + name;
     let child = _instances.get(key);
-    if (!child) {
+    // A closed/exited instance must not swallow the next command: treat it
+    // as a cache miss and spawn a fresh shell (Python clears its map too).
+    if (!child || child.closed || child.exited) {
       child = new ShellInstance(name);
       _instances.set(key, child);
     }
@@ -1718,8 +1724,12 @@ inline void sh(const std::string& cmd, int inst = 1, const std::string& shell = 
 // on the terminal and a non-zero exit throws. It never reuses a persistent
 // instance: capture and state are deliberately orthogonal (spec §3 F).
 inline std::string sh_out(const std::string& cmd) {
+    std::string pname, rest;
+    const bool pref = detail::split_shell_prefix(cmd, pname, rest);
+    const std::string name = pref ? pname : detail::default_shell_name();
+    const std::string& target = pref ? rest : cmd;
     int rc = 0;
-    const std::string raw = detail::capture_output(detail::default_shell_name(), cmd, rc);
+    const std::string raw = detail::capture_output(name, target, rc);
     if (rc != 0) throw std::runtime_error("hire::sh_out: command failed (exit " + std::to_string(rc) + "): " + cmd);
     std::string out = raw;
     if (!out.empty() && out[out.size() - 1] == '\n') {
