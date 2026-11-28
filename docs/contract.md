@@ -99,7 +99,7 @@ PATH 即可）。同名扩展多运行时声明时按字母序第一个生效。
 
 ### Python（hire.py + Taskfile.py，装饰器 SDK）
 
-`hire init --lang python` 生成两个文件：`hire.py`（契约 SDK——`__hire__` 分发、discover JSON 输出、`HIRE_ARGS` 解析全部收在 SDK 模块里）和只含任务本体的 `Taskfile.py`。声明助手：`opt`/`req`（string，可选/必填）、`flag`（bool）、`num`（数字，Args 属性为 float）；`a.name` 属性访问（缺失为 None），`a.get(name, default)` 显式兜底。平台过滤用 `@task("x", desc="...", args={...}, when={"os": "windows"})`（或 `when={"os": ["linux","darwin"]}`）。手写裸单文件契约程序同样合法——SDK 只是便利品，不引入任何私有机制（形态见本节末尾）。 `Shell` 提供按 (instance, shell) 复用的持久 shell：`sh.run(cmd, instance=1, shell=None)`；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；非哨兵输出透传、非零退出抛错，`close()` 与 `atexit` 保证无孤儿。
+`hire init --lang python` 生成两个文件：`hire.py`（契约 SDK——`__hire__` 分发、discover JSON 输出、`HIRE_ARGS` 解析全部收在 SDK 模块里）和只含任务本体的 `Taskfile.py`。声明助手：`opt`/`req`（string，可选/必填）、`flag`（bool）、`num`（数字，Args 属性为 float）；`a.name` 属性访问（缺失为 None），`a.get(name, default)` 显式兜底。平台过滤用 `@task("x", desc="...", args={...}, when={"os": "windows"})`（或 `when={"os": ["linux","darwin"]}`）。手写裸单文件契约程序同样合法——SDK 只是便利品，不引入任何私有机制（形态见本节末尾）。 `Shell` 提供按 (instance, shell) 复用的持久 shell：`sh.run(cmd, instance=1, shell=None)`；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；非哨兵输出透传、非零退出抛错，`close()` 与 `atexit` 保证无孤儿。`sh.out(cmd)` 一次性捕获 stdout 为字符串（去一个尾换行、CRLF 连 `\r` 一起），stderr 透传、非零退出抛错，不复用持久实例。
 
 ```python
 """hire.py - the hire contract SDK for Python taskfiles.
@@ -368,6 +368,26 @@ class Shell:
         if rc != 0:
             raise ShellError("command failed (exit %d): %s" % (rc, cmd))
 
+    def out(self, cmd):
+        """One-shot: capture stdout as text, strip one trailing newline,
+        leave stderr on the terminal, raise on a non-zero exit. Never uses
+        a persistent shell instance (capture and state are orthogonal)."""
+        name, rest = _split_shell_prefix(cmd)
+        if name:
+            cmd = rest
+        else:
+            name = _default_shell()
+        proc = subprocess.Popen(_one_shot_argv(name, cmd), stdout=subprocess.PIPE)
+        raw, _ = proc.communicate()
+        if proc.returncode != 0:
+            raise ShellError("command failed (exit %d): %s" % (proc.returncode, cmd))
+        text = raw.decode("utf-8", "replace")
+        if text.endswith("\n"):
+            text = text[:-1]
+            if text.endswith("\r"):
+                text = text[:-1]
+        return text
+
     def close(self):
         for inst in _instances.values():
             inst.teardown()
@@ -492,7 +512,7 @@ if __name__ == "__main__":
 
 ### Node（hire.js + Taskfile.js，无装饰器 SDK）
 
-`hire init --lang node` 生成两个文件：`hire.js`（契约 SDK——__hire__ 分发、discover JSON 输出、HIRE_ARGS 解析收在 SDK 模块里）和只含任务本体的瘦 `Taskfile.js`。声明助手：`opt`/`req`（string，可选/必填）、`flag`（bool）、`num`（数字，dispatch 时转 Number）；`a.name` 属性访问，`a._` 为位置参数数组。平台过滤用 `task("x", { desc: "...", args: {...}, when: { os: "windows" } }, fn)`（或 `when: { os: ["linux","darwin"] }`）。手写裸单文件契约程序同样合法——SDK 只是便利品，不引入任何私有机制。 `Shell` 用法：`new Shell()` 后 `run(cmd, instance, shell)` 按 (instance, shell) 复用持久实例；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；同一持久实例内命令按调用顺序执行（one-shot 输出即时写出），哨兵不外泄、非零退出以未捕获异常终止（exit 1），`close()` 与 `process.on('exit')` 保证无孤儿。 `Shell` 用法：`new Shell()` 后 `run(cmd, instance, shell)` 按 (instance, shell) 复用持久实例；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；命令按调用顺序执行，哨兵不外泄、非零退出抛错，`close()` 与 `process.on('exit')` 保证无孤儿。
+`hire init --lang node` 生成两个文件：`hire.js`（契约 SDK——__hire__ 分发、discover JSON 输出、HIRE_ARGS 解析收在 SDK 模块里）和只含任务本体的瘦 `Taskfile.js`。声明助手：`opt`/`req`（string，可选/必填）、`flag`（bool）、`num`（数字，dispatch 时转 Number）；`a.name` 属性访问，`a._` 为位置参数数组。平台过滤用 `task("x", { desc: "...", args: {...}, when: { os: "windows" } }, fn)`（或 `when: { os: ["linux","darwin"] }`）。手写裸单文件契约程序同样合法——SDK 只是便利品，不引入任何私有机制。 `Shell` 用法：`new Shell()` 后 `run(cmd, instance, shell)` 按 (instance, shell) 复用持久实例；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；同一持久实例内命令按调用顺序执行（one-shot 输出即时写出），哨兵不外泄、非零退出以未捕获异常终止（exit 1），`close()` 与 `process.on('exit')` 保证无孤儿。 `Shell` 用法：`new Shell()` 后 `run(cmd, instance, shell)` 按 (instance, shell) 复用持久实例；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；命令按调用顺序执行，哨兵不外泄、非零退出抛错，`close()` 与 `process.on('exit')` 保证无孤儿。`sh.out(cmd)` 一次性捕获 stdout 为字符串（去一个尾换行、CRLF 连 `\r` 一起），stderr 透传、非零退出抛错，不复用持久实例。
 
 `hire.js`：
 
@@ -760,6 +780,25 @@ class Shell {
       _instances.set(key, child);
     }
     child.send(cmd);
+  }
+
+  // One-shot: capture stdout as text, strip one trailing newline, leave
+  // stderr on the terminal, throw on a non-zero exit. Never reuses a
+  // persistent instance (capture and state are orthogonal).
+  out(cmd) {
+    const prefix = _splitShellPrefix(cmd);
+    const name = prefix ? prefix.name : _defaultShell();
+    if (prefix) cmd = prefix.rest;
+    const r = spawnSync(_resolveShell(name), _oneShotArgs(name, cmd),
+                        { stdio: ["inherit", "pipe", "inherit"], encoding: "utf8" });
+    if (r.error) throw new Error("Shell: " + r.error.message);
+    if (r.status !== 0) throw new Error("command failed (exit " + r.status + "): " + cmd);
+    let text = r.stdout;
+    if (text.endsWith("\n")) {
+      text = text.slice(0, -1);
+      if (text.endsWith("\r")) text = text.slice(0, -1);
+    }
+    return text;
   }
 
   close() { _finishInstances(); }
@@ -1490,6 +1529,97 @@ inline void spawn_oneshot(const std::string& name, const std::string& cmd) {
     if (rc != 0) throw std::runtime_error("hire::sh: command failed (exit " + std::to_string(rc) + "): " + cmd);
 }
 
+// capture_output runs a one-shot command with stdout piped back to the
+// caller while stderr stays on the parent's terminal (sh_out: stdout is
+// data, stderr is still diagnostic output). rc_out carries the exit code.
+inline std::string capture_output(const std::string& name, const std::string& cmd, int& rc_out) {
+    std::vector<std::string> argv = oneshot_argv(name, cmd);
+#ifdef _WIN32
+    argv[0] = resolve_shell_exe(argv[0]);
+    std::string cmdline = build_cmdline(argv);
+    std::vector<char> buf(cmdline.begin(), cmdline.end());
+    buf.push_back('\0');
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = nullptr;
+    sa.bInheritHandle = TRUE;
+    HANDLE out_r = nullptr, out_w = nullptr;
+    if (!CreatePipe(&out_r, &out_w, &sa, 0)) throw std::runtime_error("hire::sh_out: CreatePipe failed");
+    SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
+    HANDLE self = GetCurrentProcess();
+    HANDLE in = nullptr, err = nullptr;
+    HANDLE s_in = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE s_err = GetStdHandle(STD_ERROR_HANDLE);
+    if (s_in != nullptr && s_in != INVALID_HANDLE_VALUE)
+        DuplicateHandle(self, s_in, self, &in, 0, TRUE, DUPLICATE_SAME_ACCESS);
+    if (s_err != nullptr && s_err != INVALID_HANDLE_VALUE)
+        DuplicateHandle(self, s_err, self, &err, 0, TRUE, DUPLICATE_SAME_ACCESS);
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = in ? in : s_in;
+    si.hStdOutput = out_w;
+    si.hStdError = err ? err : s_err;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&pi, sizeof(pi));
+    BOOL ok = CreateProcessA(nullptr, buf.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi);
+    if (in) CloseHandle(in);
+    if (err) CloseHandle(err);
+    CloseHandle(out_w);
+    if (!ok) {
+        CloseHandle(out_r);
+        throw std::runtime_error("hire::sh_out: cannot start shell (CreateProcess failed)");
+    }
+    CloseHandle(pi.hThread);
+    std::string out;
+    char tmp[1024];
+    DWORD n = 0;
+    while (ReadFile(out_r, tmp, (DWORD)sizeof(tmp), &n, nullptr) && n > 0) out.append(tmp, (size_t)n);
+    CloseHandle(out_r);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 0;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    rc_out = (int)code;
+    return out;
+#else
+    std::vector<char*> cargv;
+    for (size_t i = 0; i < argv.size(); ++i) cargv.push_back(const_cast<char*>(argv[i].c_str()));
+    cargv.push_back(nullptr);
+    int p[2];
+    if (::pipe(p) != 0) throw std::runtime_error("hire::sh_out: pipe failed");
+    pid_t pid = ::fork();
+    if (pid < 0) {
+        ::close(p[0]); ::close(p[1]);
+        throw std::runtime_error("hire::sh_out: fork failed");
+    }
+    if (pid == 0) {
+        ::dup2(p[1], STDOUT_FILENO);   // stderr stays inherited
+        ::close(p[0]); ::close(p[1]);
+        ::execvp(cargv[0], cargv.data());
+        ::_exit(127);
+    }
+    ::close(p[1]);
+    std::string out;
+    char tmp[1024];
+    for (;;) {
+        ssize_t n = ::read(p[0], tmp, sizeof(tmp));
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        out.append(tmp, (size_t)n);
+    }
+    ::close(p[0]);
+    int status = 0;
+    for (;;) {
+        pid_t r = ::waitpid(pid, &status, 0);
+        if (r == pid || (r < 0 && errno != EINTR)) break;
+    }
+    rc_out = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+    return out;
+#endif
+}
+
 inline void collect_export(const std::string& cmd, const std::string& name) {
     if (!is_builtin(name))
         throw std::runtime_error("hire::sh: instance=0 (export mode) needs a builtin shell (pwsh/bash/sh), got " + name);
@@ -1581,6 +1711,22 @@ inline void sh(const std::string& cmd, int inst = 1, const std::string& shell = 
         return;
     }
     detail::run_persistent(cmd, name, inst);
+}
+
+// sh_out runs one command in a fresh shell, returns its stdout with exactly
+// one trailing newline removed (and a preceding CR for CRLF). stderr stays
+// on the terminal and a non-zero exit throws. It never reuses a persistent
+// instance: capture and state are deliberately orthogonal (spec §3 F).
+inline std::string sh_out(const std::string& cmd) {
+    int rc = 0;
+    const std::string raw = detail::capture_output(detail::default_shell_name(), cmd, rc);
+    if (rc != 0) throw std::runtime_error("hire::sh_out: command failed (exit " + std::to_string(rc) + "): " + cmd);
+    std::string out = raw;
+    if (!out.empty() && out[out.size() - 1] == '\n') {
+        out.erase(out.size() - 1);
+        if (!out.empty() && out[out.size() - 1] == '\r') out.erase(out.size() - 1);
+    }
+    return out;
 }
 
 // echo prints its printable arguments joined with no separator and appends
@@ -1835,7 +1981,7 @@ void hire_main(hire::registry& reg) {
 }
 ```
 
-### C++ 函数形式：`hire::sh`（shell 实例，v2.2.0）
+### C++ 函数形式：`hire::sh` / `hire::echo` / `hire::sh_out`（shell 实例，v2.2.0+）
 
 函数形式文件也可 `#include "hire.hpp"`（头由 hire 写进缓存目录、discover 与 compile 两阶段注入 `-I`，见上），用内嵌 SDK 的 `hire::sh` 获得与 Lua `x.sh` 对等的 shell 实例能力——用户侧只多这一行 include：
 
@@ -1859,3 +2005,5 @@ void demo() {
 - **生命周期与错误**：`main()` 放 RAII 守卫，析构时 `close_instances()`（关 stdin、等待、超时 kill），异常与正常返回都 teardown，不留孤儿 shell；`dispatch` 的 run 分支 try/catch 把异常转成干净的非零退出码（由 hire 报 `task <name> failed (exit N)`）。discover 分支保持纯，不创建实例。
 - **平台**：`#ifdef _WIN32` 用 `CreatePipe`+`CreateProcess`（pwsh 播种 `$LASTEXITCODE = 0`、哨兵用 `$?` 兜底），否则 `pipe`+`fork`+`execvp`；零第三方依赖、零内置解释器。
 - **导出模式（`inst=0`）**：命令只收集进缓冲、不执行也不写哨兵。任务成功时由 `dispatch` 的 run 分支调用 `detail::finish_export(name, true)`，把收集的命令用 `\n` 连接一次性打到 stdout（stdout 是 TTY 时另在 stderr 给 `eval "$(hire <name>)"` / pwsh 的 `iex (hire <name>)` 提示）；任务失败（含 `sh()` 抛异常）则调用 `finish_export(name, false)` 丢弃缓冲并在 stderr 提示。成功/失败两条路径都会调用——`sh()` 会抛异常，普通的“dispatch 之后再刷”写法会被跳过，所以钩子必须放在 try/catch 的两个分支里。用户自己的 `std::cout` 不经过这条改道（与 Lua `x.echo` 不同）。
+- **`hire::echo(args...)`**：可变参数流式拼接后加一个换行；普通任务写 stdout，进入导出模式（`sh(cmd, 0)` 之后）写 stderr，避免污染 eval 载荷；`dispatch` 的 run 分支在任务结束后重置改道标记。用户自己的 `std::cout` 不受影响。
+- **`hire::sh_out(cmd)`**：one-shot 捕获 stdout 返回 `std::string`，去掉恰好一个尾换行（CRLF 时连 `\r` 一起），stderr 照常透传，非零退出抛错；不复用持久实例、不写哨兵。

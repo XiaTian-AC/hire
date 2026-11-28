@@ -574,3 +574,66 @@ void hire_main(hire::registry& reg) {
 		t.Errorf("export echo: stdout %q stderr %q; want hi on stderr only", so, se)
 	}
 }
+
+// TestCppShOut pins spec §3 F: sh_out captures stdout into a string (one
+// trailing newline stripped), leaves stderr on the terminal, and throws on
+// a non-zero exit. Skipped when g++ is absent.
+func TestCppShOut(t *testing.T) {
+	probeCmd(t, "g++")
+	t.Setenv("HIRE_SHELL", "sh")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hire.hpp"), []byte(adapter.CppHeaderTemplate), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cpp := filepath.Join(dir, "probe.cpp")
+	src := `#include "hire.hpp"
+#include <fstream>
+void hire_main(hire::registry& reg) {
+    reg.task("cap").run([](const hire::args&) {
+        const char* w = std::getenv("HIRE_WRITE");
+        std::ofstream out(w ? w : "out.txt");
+        out << "[" << hire::sh_out("echo noisy 1>&2; echo hi") << "]";
+    });
+    reg.task("fail").run([](const hire::args&) {
+        hire::sh_out("exit 7");
+    });
+}
+`
+	if err := os.WriteFile(cpp, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(dir, "probe.exe")
+	if out, err := exec.Command("g++", "-std=c++20", "-o", exe, cpp).CombinedOutput(); err != nil {
+		t.Fatalf("g++ build: %v\n%s", err, out)
+	}
+	writeTo := filepath.Join(dir, "captured.txt")
+	t.Setenv("HIRE_WRITE", writeTo)
+	var stdout, stderr strings.Builder
+	cmd := exec.Command(exe, "__hire__", "run", "cap")
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("cap run: %v (stdout %q stderr %q)", err, stdout.String(), stderr.String())
+	}
+	got, err := os.ReadFile(writeTo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "[hi]" {
+		t.Errorf("sh_out capture = %q, want %q", string(got), "[hi]")
+	}
+	if !strings.Contains(stderr.String(), "noisy") {
+		t.Errorf("stderr did not pass through: %q", stderr.String())
+	}
+	if strings.Contains(stdout.String(), "hi") || strings.Contains(stdout.String(), "noisy") {
+		t.Errorf("captured output leaked to stdout: %q", stdout.String())
+	}
+	stderr.Reset()
+	cmd = exec.Command(exe, "__hire__", "run", "fail")
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err == nil {
+		t.Error("non-zero sh_out should fail the task")
+	}
+	if !strings.Contains(stderr.String(), "command failed (exit 7)") {
+		t.Errorf("non-zero exit error = %q", stderr.String())
+	}
+}

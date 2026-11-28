@@ -22,8 +22,9 @@ const LuaTemplate = `-- hire Taskfile.lua - a taskfile is a plain Lua script: ta
 --     end,
 --   }
 --
--- Inside a task: x.sh(cmd) shells out, x.echo(...) prints, x.run("other")
--- calls a sibling task, x.env("NAME") reads the environment.
+-- Inside a task: x.sh(cmd) shells out, x.sh_out(cmd) captures stdout as a
+-- string, x.echo(...) prints, x.run("other") calls a sibling task,
+-- x.env("NAME") reads the environment.
 -- The full reference lives in docs/lua.md.
 
 hello = task {
@@ -304,6 +305,26 @@ class Shell:
         rc = inst.send(cmd)
         if rc != 0:
             raise ShellError("command failed (exit %d): %s" % (rc, cmd))
+
+    def out(self, cmd):
+        """One-shot: capture stdout as text, strip one trailing newline,
+        leave stderr on the terminal, raise on a non-zero exit. Never uses
+        a persistent shell instance (capture and state are orthogonal)."""
+        name, rest = _split_shell_prefix(cmd)
+        if name:
+            cmd = rest
+        else:
+            name = _default_shell()
+        proc = subprocess.Popen(_one_shot_argv(name, cmd), stdout=subprocess.PIPE)
+        raw, _ = proc.communicate()
+        if proc.returncode != 0:
+            raise ShellError("command failed (exit %d): %s" % (proc.returncode, cmd))
+        text = raw.decode("utf-8", "replace")
+        if text.endswith("\n"):
+            text = text[:-1]
+            if text.endswith("\r"):
+                text = text[:-1]
+        return text
 
     def close(self):
         for inst in _instances.values():
@@ -642,6 +663,25 @@ class Shell {
       _instances.set(key, child);
     }
     child.send(cmd);
+  }
+
+  // One-shot: capture stdout as text, strip one trailing newline, leave
+  // stderr on the terminal, throw on a non-zero exit. Never reuses a
+  // persistent instance (capture and state are orthogonal).
+  out(cmd) {
+    const prefix = _splitShellPrefix(cmd);
+    const name = prefix ? prefix.name : _defaultShell();
+    if (prefix) cmd = prefix.rest;
+    const r = spawnSync(_resolveShell(name), _oneShotArgs(name, cmd),
+                        { stdio: ["inherit", "pipe", "inherit"], encoding: "utf8" });
+    if (r.error) throw new Error("Shell: " + r.error.message);
+    if (r.status !== 0) throw new Error("command failed (exit " + r.status + "): " + cmd);
+    let text = r.stdout;
+    if (text.endsWith("\n")) {
+      text = text.slice(0, -1);
+      if (text.endsWith("\r")) text = text.slice(0, -1);
+    }
+    return text;
   }
 
   close() { _finishInstances(); }
@@ -1312,6 +1352,97 @@ inline void spawn_oneshot(const std::string& name, const std::string& cmd) {
     if (rc != 0) throw std::runtime_error("hire::sh: command failed (exit " + std::to_string(rc) + "): " + cmd);
 }
 
+// capture_output runs a one-shot command with stdout piped back to the
+// caller while stderr stays on the parent's terminal (sh_out: stdout is
+// data, stderr is still diagnostic output). rc_out carries the exit code.
+inline std::string capture_output(const std::string& name, const std::string& cmd, int& rc_out) {
+    std::vector<std::string> argv = oneshot_argv(name, cmd);
+#ifdef _WIN32
+    argv[0] = resolve_shell_exe(argv[0]);
+    std::string cmdline = build_cmdline(argv);
+    std::vector<char> buf(cmdline.begin(), cmdline.end());
+    buf.push_back('\0');
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = nullptr;
+    sa.bInheritHandle = TRUE;
+    HANDLE out_r = nullptr, out_w = nullptr;
+    if (!CreatePipe(&out_r, &out_w, &sa, 0)) throw std::runtime_error("hire::sh_out: CreatePipe failed");
+    SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
+    HANDLE self = GetCurrentProcess();
+    HANDLE in = nullptr, err = nullptr;
+    HANDLE s_in = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE s_err = GetStdHandle(STD_ERROR_HANDLE);
+    if (s_in != nullptr && s_in != INVALID_HANDLE_VALUE)
+        DuplicateHandle(self, s_in, self, &in, 0, TRUE, DUPLICATE_SAME_ACCESS);
+    if (s_err != nullptr && s_err != INVALID_HANDLE_VALUE)
+        DuplicateHandle(self, s_err, self, &err, 0, TRUE, DUPLICATE_SAME_ACCESS);
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = in ? in : s_in;
+    si.hStdOutput = out_w;
+    si.hStdError = err ? err : s_err;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&pi, sizeof(pi));
+    BOOL ok = CreateProcessA(nullptr, buf.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi);
+    if (in) CloseHandle(in);
+    if (err) CloseHandle(err);
+    CloseHandle(out_w);
+    if (!ok) {
+        CloseHandle(out_r);
+        throw std::runtime_error("hire::sh_out: cannot start shell (CreateProcess failed)");
+    }
+    CloseHandle(pi.hThread);
+    std::string out;
+    char tmp[1024];
+    DWORD n = 0;
+    while (ReadFile(out_r, tmp, (DWORD)sizeof(tmp), &n, nullptr) && n > 0) out.append(tmp, (size_t)n);
+    CloseHandle(out_r);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 0;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    rc_out = (int)code;
+    return out;
+#else
+    std::vector<char*> cargv;
+    for (size_t i = 0; i < argv.size(); ++i) cargv.push_back(const_cast<char*>(argv[i].c_str()));
+    cargv.push_back(nullptr);
+    int p[2];
+    if (::pipe(p) != 0) throw std::runtime_error("hire::sh_out: pipe failed");
+    pid_t pid = ::fork();
+    if (pid < 0) {
+        ::close(p[0]); ::close(p[1]);
+        throw std::runtime_error("hire::sh_out: fork failed");
+    }
+    if (pid == 0) {
+        ::dup2(p[1], STDOUT_FILENO);   // stderr stays inherited
+        ::close(p[0]); ::close(p[1]);
+        ::execvp(cargv[0], cargv.data());
+        ::_exit(127);
+    }
+    ::close(p[1]);
+    std::string out;
+    char tmp[1024];
+    for (;;) {
+        ssize_t n = ::read(p[0], tmp, sizeof(tmp));
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        out.append(tmp, (size_t)n);
+    }
+    ::close(p[0]);
+    int status = 0;
+    for (;;) {
+        pid_t r = ::waitpid(pid, &status, 0);
+        if (r == pid || (r < 0 && errno != EINTR)) break;
+    }
+    rc_out = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+    return out;
+#endif
+}
+
 inline void collect_export(const std::string& cmd, const std::string& name) {
     if (!is_builtin(name))
         throw std::runtime_error("hire::sh: instance=0 (export mode) needs a builtin shell (pwsh/bash/sh), got " + name);
@@ -1403,6 +1534,22 @@ inline void sh(const std::string& cmd, int inst = 1, const std::string& shell = 
         return;
     }
     detail::run_persistent(cmd, name, inst);
+}
+
+// sh_out runs one command in a fresh shell, returns its stdout with exactly
+// one trailing newline removed (and a preceding CR for CRLF). stderr stays
+// on the terminal and a non-zero exit throws. It never reuses a persistent
+// instance: capture and state are deliberately orthogonal (spec §3 F).
+inline std::string sh_out(const std::string& cmd) {
+    int rc = 0;
+    const std::string raw = detail::capture_output(detail::default_shell_name(), cmd, rc);
+    if (rc != 0) throw std::runtime_error("hire::sh_out: command failed (exit " + std::to_string(rc) + "): " + cmd);
+    std::string out = raw;
+    if (!out.empty() && out[out.size() - 1] == '\n') {
+        out.erase(out.size() - 1);
+        if (!out.empty() && out[out.size() - 1] == '\r') out.erase(out.size() - 1);
+    }
+    return out;
 }
 
 // echo prints its printable arguments joined with no separator and appends

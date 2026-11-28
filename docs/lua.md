@@ -81,6 +81,7 @@ release = task {
 | 方法 | 行为 | 错误时 |
 |---|---|---|
 | `x.sh(cmd, opts?)` | 经 shell 执行命令（见 §4） | 非零退出抛 Lua 错误 |
+| `x.sh_out(cmd)` | 一次性执行命令并返回 stdout 字符串（去一个尾换行），stderr 透传（见 §4） | 非零退出抛 Lua 错误 |
 | `x.exec(name, args?)` | 直接 exec，不经 shell，无注入面 | 非零退出抛错 |
 | `x.run(name, args?)` | 调用**同文件**另一任务（递归上限 100） | 任务不存在抛错 |
 | `x.echo(...)` | 打印 stdout（export 模式下改走 stderr） | — |
@@ -136,6 +137,14 @@ release = task {
 
 实例生命周期：任务结束（正常返回 / 抛错 / panic）统一关停全部实例。实例崩溃或
 `exit` 后，下一条命令自动冷重启。
+
+### sh_out：一次性取输出
+
+`x.sh_out(cmd) -> string` 每次新起一个子进程，把 stdout 全部捕获并返回（不透传），
+只去掉**恰好一个**尾换行（CRLF 时连前面的 `\r` 一起），内部换行保留；stderr 仍走
+任务 stderr，命令非零退出抛 Lua 错误。它**不复用持久实例**——捕获语义与状态保留
+正交；需要"状态 + 输出"时自己 `x.sh` 配合重定向读文件。命令同样支持
+`"bash:cmd"` 之类 one-shot 前缀。
 
 ## 5. export 模式（instance = 0）
 

@@ -175,3 +175,59 @@ sdk.dispatch();
 	stdout, stderr := runSDKProbe(t, node, "hire.js", adapter.NodeSDKTemplate, "Taskfile.js", script)
 	assertShellProbe(t, stdout, stderr)
 }
+
+// Shell.out (Python/Node): one-shot stdout capture, stderr passthrough,
+// non-zero exit raises. The scripts report their findings on stderr so
+// runSDKProbe's success path can be reused unchanged.
+func TestPythonShellOut(t *testing.T) {
+	py := probeTool(t, "python", "python3")
+	probeTool(t, "sh")
+	const script = `import sys
+from hire import Shell, task, dispatch
+import hire
+
+@task("probe", desc="sh_out probe")
+def probe(a):
+    sh = Shell()
+    sys.stderr.write("RESULT=" + repr(sh.out("echo noisy 1>&2; echo hi")) + "\n")
+    try:
+        sh.out("exit 7")
+    except Exception as e:
+        sys.stderr.write("THREW=" + str(e) + "\n")
+    sh.close()
+
+if __name__ == "__main__":
+    hire.dispatch()
+`
+	_, stderr := runSDKProbe(t, py, "hire.py", adapter.PythonSDKTemplate, "Taskfile.py", script)
+	assertShellOutProbe(t, stderr, "'hi'")
+}
+
+func TestNodeShellOut(t *testing.T) {
+	node := probeTool(t, "node")
+	probeTool(t, "sh")
+	const script = `const sdk = require("./hire.js");
+sdk.task("probe", { desc: "sh_out probe" }, (a) => {
+  const sh = new sdk.Shell();
+  process.stderr.write("RESULT=" + JSON.stringify(sh.out("echo noisy 1>&2; echo hi")) + "\n");
+  try { sh.out("exit 7"); } catch (e) { process.stderr.write("THREW=" + e.message + "\n"); }
+  sh.close();
+});
+sdk.dispatch();
+`
+	_, stderr := runSDKProbe(t, node, "hire.js", adapter.NodeSDKTemplate, "Taskfile.js", script)
+	assertShellOutProbe(t, stderr, `"hi"`)
+}
+
+func assertShellOutProbe(t *testing.T, stderr, wantResult string) {
+	t.Helper()
+	if !strings.Contains(stderr, "RESULT="+wantResult) {
+		t.Errorf("stderr = %q, want RESULT=%s", stderr, wantResult)
+	}
+	if !strings.Contains(stderr, "noisy") {
+		t.Errorf("stderr = %q, want command stderr to pass through", stderr)
+	}
+	if !strings.Contains(stderr, "THREW=command failed (exit 7)") {
+		t.Errorf("stderr = %q, want non-zero exit to raise", stderr)
+	}
+}

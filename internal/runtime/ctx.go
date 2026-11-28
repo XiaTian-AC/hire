@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -74,6 +75,7 @@ func (c *Ctx) metatable(L *lua.LState) *lua.LTable {
 		mt := L.NewTable()
 		mt.RawSetString("__index", mt)
 		mt.RawSetString("sh", L.NewFunction(ctxSh))
+		mt.RawSetString("sh_out", L.NewFunction(ctxShOut))
 		mt.RawSetString("exec", L.NewFunction(ctxExec))
 		mt.RawSetString("run", L.NewFunction(ctxRun))
 		mt.RawSetString("echo", L.NewFunction(ctxEcho))
@@ -143,6 +145,50 @@ func ctxSh(L *lua.LState) int {
 	c.execSh(L, cmd, o)
 	L.Push(lua.LTrue)
 	return 1
+}
+
+// ctxShOut runs one command in a fresh shell and returns its stdout with
+// exactly one trailing newline stripped. stderr passes through to the task's
+// stderr, and a non-zero exit raises a Lua error (spec §3 F).
+func ctxShOut(L *lua.LState) int {
+	c := getCtx(L)
+	cmd := L.CheckString(1)
+	name := c.ShellName
+	if name == "" {
+		name = shell.DefaultName()
+	}
+	if n, rest, ok := splitShellPrefix(cmd, c.Registry); ok {
+		name, cmd = n, rest
+	}
+	spec, err := shell.Resolve(name, c.Registry)
+	if err != nil {
+		L.RaiseError("%v", err)
+	}
+	execCmd := exec.Command(spec.Path, spec.Argv(cmd)...)
+	var out bytes.Buffer
+	execCmd.Stdout = &out
+	execCmd.Stderr = c.Stderr
+	if err := execCmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			L.RaiseError("x.sh_out: command failed (exit %d): %s", ee.ExitCode(), cmd)
+		}
+		L.RaiseError("x.sh_out: command failed: %v: %s", err, cmd)
+	}
+	L.Push(lua.LString(stripOneTrailingNewline(out.String())))
+	return 1
+}
+
+// stripOneTrailingNewline mirrors $(cmd): drop one trailing newline and the
+// CR ahead of it when the shell emitted CRLF.
+func stripOneTrailingNewline(s string) string {
+	if strings.HasSuffix(s, "\n") {
+		s = s[:len(s)-1]
+		if strings.HasSuffix(s, "\r") {
+			s = s[:len(s)-1]
+		}
+	}
+	return s
 }
 
 // RunCommand implements adapter.CmdRunner, so synthesized shorthand

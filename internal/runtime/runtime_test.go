@@ -641,3 +641,36 @@ end
 		t.Errorf("output = %q, want x.env to return the value", out)
 	}
 }
+
+// TestShOut pins x.sh_out: one-shot stdout capture with exactly one
+// trailing newline removed, stderr passthrough, and a Lua error on a
+// non-zero exit (spec §3 F).
+func TestShOut(t *testing.T) {
+	mustShell(t, "sh")
+	c := writeChain(t, `
+shell = "sh"
+capture = function()
+  x.echo("[" .. x.sh_out("echo noisy 1>&2; echo hi") .. "]")
+end
+fail = function()
+  x.sh_out("exit 7")
+end
+`)
+	out, errb, err := runTaskIO(t, c, "capture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[hi]") {
+		t.Errorf("stdout = %q, want [hi]", out)
+	}
+	if !strings.Contains(errb, "noisy") {
+		t.Errorf("stderr = %q, want command stderr to pass through", errb)
+	}
+	_, errb, err = runTaskIO(t, c, "fail")
+	if err == nil {
+		t.Fatal("non-zero x.sh_out should raise a Lua error")
+	}
+	if !strings.Contains(err.Error(), "exit 7") && !strings.Contains(errb, "exit 7") {
+		t.Errorf("non-zero exit error = %v / stderr %q", err, errb)
+	}
+}
