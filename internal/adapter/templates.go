@@ -106,11 +106,15 @@ def num(desc=""):
     return {"type": "num", "required": False, "desc": desc}
 
 
-def task(name, desc="", args=None):
-    """Register the decorated function as a hire task."""
+def task(name, desc="", args=None, when=None):
+    """Register the decorated function as a hire task. when is an optional
+    discover guard, e.g. {"os": "windows"} or {"os": ["linux", "darwin"]}."""
 
     def register(fn):
-        _registry[name] = ({"name": name, "desc": desc, "args": args or {}}, fn)
+        spec = {"name": name, "desc": desc, "args": args or {}}
+        if when is not None:
+            spec["when"] = when
+        _registry[name] = (spec, fn)
         return fn
 
     return register
@@ -410,10 +414,10 @@ const { spawn, spawnSync } = require("child_process");
 const _registry = new Map();
 
 function task(name, opts, fn) {
-  _registry.set(name, {
-    spec: { name: name, desc: (opts && opts.desc) || "", args: (opts && opts.args) || {} },
-    fn: fn,
-  });
+  const spec = { name: name, desc: (opts && opts.desc) || "", args: (opts && opts.args) || {} };
+  // when is an optional discover guard: { os: "windows" } or { os: ["linux", "darwin"] }.
+  if (opts && opts.when) spec.when = opts.when;
+  _registry.set(name, { spec: spec, fn: fn });
 }
 
 function opt(desc) { return { type: "string", required: false, desc: desc || "" }; }

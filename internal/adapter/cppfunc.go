@@ -50,6 +50,7 @@ type FuncTask struct {
 	Name   string      `json:"name"`
 	Desc   string      `json:"desc"`
 	Params []FuncParam `json:"params,omitempty"`
+	When   string      `json:"when,omitempty"` // from a `// when: <os>` doc comment line
 
 	hasBody bool `json:"-"` // the definition was seen; a bare declaration cannot link
 }
@@ -249,6 +250,7 @@ func funcTaskFromNode(raw json.RawMessage, file, srcPath string) (funcDecl, bool
 		switch child.Kind {
 		case "FullComment":
 			t.Desc = commentDesc(child)
+			t.When = commentWhen(child)
 		case "ParmVarDecl":
 			t.Params = append(t.Params, funcParam(child))
 		case "CompoundStmt":
@@ -286,6 +288,9 @@ func previousDeclID(raw json.RawMessage) string {
 func mergeRedecl(dst *FuncTask, src FuncTask) {
 	if dst.Desc == "" {
 		dst.Desc = src.Desc
+	}
+	if dst.When == "" {
+		dst.When = src.When
 	}
 	if len(dst.Params) == 0 {
 		dst.Params = src.Params
@@ -422,6 +427,62 @@ func firstText(n *astNode) string {
 		}
 	}
 	return ""
+}
+
+// commentWhen reads an optional "when: <os>" line from a clang
+// FullComment (any line after the desc). Clang may put each "///" or
+// "//!" line in its own TextComment, so all text nodes are scanned in
+// document order; an empty result means no platform guard was declared.
+func commentWhen(n *astNode) string {
+	var texts []string
+	collectText(n, &texts)
+	for _, text := range texts {
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimSpace(line)
+			if len(line) >= 5 && strings.EqualFold(line[:5], "when:") {
+				return strings.TrimSpace(line[5:])
+			}
+		}
+	}
+	return ""
+}
+
+// collectText gathers every TextComment's text in document order.
+func collectText(n *astNode, out *[]string) {
+	if n.Kind == "TextComment" && n.Text != "" {
+		*out = append(*out, n.Text)
+	}
+	for i := range n.Inner {
+		collectText(&n.Inner[i], out)
+	}
+}
+
+// knownOS is the set of platform names a C++ `// when:` comment accepts.
+// These are Go's GOOS spellings, the same values runtime.GOOS can report.
+var knownOS = map[string]bool{
+	"aix": true, "android": true, "darwin": true, "dragonfly": true,
+	"freebsd": true, "hurd": true, "illumos": true, "ios": true,
+	"js": true, "linux": true, "nacl": true, "netbsd": true,
+	"openbsd": true, "plan9": true, "solaris": true, "wasip1": true,
+	"windows": true, "zos": true,
+}
+
+// filterFuncTasksByOS drops tasks whose `// when:` guard does not match
+// this platform, before the wrapper is generated (so they never appear
+// in discover and can not be run). An unrecognized os is a load error
+// rather than a silent never-match - a typo must not hide a task.
+func filterFuncTasksByOS(path string, tasks []FuncTask) ([]FuncTask, error) {
+	out := make([]FuncTask, 0, len(tasks))
+	for _, t := range tasks {
+		if t.When == "" || t.When == runtime.GOOS {
+			out = append(out, t)
+			continue
+		}
+		if !knownOS[t.When] {
+			return nil, fmt.Errorf("%s: function %q: unknown when os %q (use a known os such as windows, linux or darwin)", path, t.Name, t.When)
+		}
+	}
+	return out, nil
 }
 
 // clangFileMatches reports whether the clang-reported source file is
@@ -771,6 +832,10 @@ func loadCppFuncForm(path, rtName string, spec RuntimeSpec, src []byte) (*File, 
 	tasks, err := parseFuncForm(path, parser, dir)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", path, err)
+	}
+	tasks, err = filterFuncTasksByOS(path, tasks)
+	if err != nil {
+		return nil, err
 	}
 	if len(tasks) == 0 {
 		return nil, fmt.Errorf("%s: no task functions found - top-level non-static functions are tasks; static and namespace-nested functions are helpers", path)

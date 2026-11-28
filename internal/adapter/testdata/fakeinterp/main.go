@@ -9,6 +9,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 )
 
 func main() {
@@ -48,6 +49,15 @@ func main() {
 		return
 	case "floattype":
 		fmt.Println(`{"tasks":[{"name":"t","args":{"n":{"type":"float"}}}]}`)
+		return
+	case "when":
+		fmt.Printf(`{"tasks":[`+
+			`{"name":"winonly","desc":"windows only","when":{"os":"windows"}},`+
+			`{"name":"linuxonly","desc":"linux only","when":{"os":"linux"}},`+
+			`{"name":"here","desc":"current os","when":{"os":%q}},`+
+			`{"name":"multi","desc":"os array","when":{"os":["other",%q]}},`+
+			`{"name":"gone","desc":"never matches","when":{"os":"not-an-os"}}`+
+			`]}`, runtime.GOOS, runtime.GOOS)
 		return
 	}
 	switch {

@@ -35,8 +35,11 @@ Node、编译的 C++、甚至一个 shell 脚本。
 被调用得远比 run 频繁，不纯的 discover 会被日常列表操作意外引爆。
 
 discover JSON 字段：`tasks`（数组），每项 `name`（必填）、`desc`、`args`（对象，
-每个参数 `{ type: "string"|"bool"|"num", required: bool, desc: string }`，字段可省）。
-hire 忽略未知字段，所以契约可以向后生长。
+每个参数 `{ type: "string"|"bool"|"num", required: bool, desc: string }`，字段可省），
+以及可选 `when`（`{"os": "windows"}` 或 `{"os": ["linux","darwin"]}`）。hire 忽略未知字段，
+所以契约可以向后生长。`when` 在 hire 加载期按当前平台过滤：不匹配的任务视同不存在
+（`ls` 不显示、run 报 not found），discover 本身保持纯声明；未知 os 名当作永不匹配
+（与 Lua/TOML 一致）。Python/Node SDK 的 `task()` 可直接传 `when`。
 
 ## HIRE_ARGS 形状
 
@@ -96,7 +99,7 @@ PATH 即可）。同名扩展多运行时声明时按字母序第一个生效。
 
 ### Python（hire.py + Taskfile.py，装饰器 SDK）
 
-`hire init --lang python` 生成两个文件：`hire.py`（契约 SDK——`__hire__` 分发、discover JSON 输出、`HIRE_ARGS` 解析全部收在 SDK 模块里）和只含任务本体的 `Taskfile.py`。声明助手：`opt`/`req`（string，可选/必填）、`flag`（bool）、`num`（数字，Args 属性为 float）；`a.name` 属性访问（缺失为 None），`a.get(name, default)` 显式兜底。手写裸单文件契约程序同样合法——SDK 只是便利品，不引入任何私有机制（形态见本节末尾）。 `Shell` 提供按 (instance, shell) 复用的持久 shell：`sh.run(cmd, instance=1, shell=None)`；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；非哨兵输出透传、非零退出抛错，`close()` 与 `atexit` 保证无孤儿。
+`hire init --lang python` 生成两个文件：`hire.py`（契约 SDK——`__hire__` 分发、discover JSON 输出、`HIRE_ARGS` 解析全部收在 SDK 模块里）和只含任务本体的 `Taskfile.py`。声明助手：`opt`/`req`（string，可选/必填）、`flag`（bool）、`num`（数字，Args 属性为 float）；`a.name` 属性访问（缺失为 None），`a.get(name, default)` 显式兜底。平台过滤用 `@task("x", desc="...", args={...}, when={"os": "windows"})`（或 `when={"os": ["linux","darwin"]}`）。手写裸单文件契约程序同样合法——SDK 只是便利品，不引入任何私有机制（形态见本节末尾）。 `Shell` 提供按 (instance, shell) 复用的持久 shell：`sh.run(cmd, instance=1, shell=None)`；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；非哨兵输出透传、非零退出抛错，`close()` 与 `atexit` 保证无孤儿。
 
 ```python
 """hire.py - the hire contract SDK for Python taskfiles.
@@ -166,11 +169,15 @@ def num(desc=""):
     return {"type": "num", "required": False, "desc": desc}
 
 
-def task(name, desc="", args=None):
-    """Register the decorated function as a hire task."""
+def task(name, desc="", args=None, when=None):
+    """Register the decorated function as a hire task. when is an optional
+    discover guard, e.g. {"os": "windows"} or {"os": ["linux", "darwin"]}."""
 
     def register(fn):
-        _registry[name] = ({"name": name, "desc": desc, "args": args or {}}, fn)
+        spec = {"name": name, "desc": desc, "args": args or {}}
+        if when is not None:
+            spec["when"] = when
+        _registry[name] = (spec, fn)
         return fn
 
     return register
@@ -485,7 +492,7 @@ if __name__ == "__main__":
 
 ### Node（hire.js + Taskfile.js，无装饰器 SDK）
 
-`hire init --lang node` 生成两个文件：`hire.js`（契约 SDK——__hire__ 分发、discover JSON 输出、HIRE_ARGS 解析收在 SDK 模块里）和只含任务本体的瘦 `Taskfile.js`。声明助手：`opt`/`req`（string，可选/必填）、`flag`（bool）、`num`（数字，dispatch 时转 Number）；`a.name` 属性访问，`a._` 为位置参数数组。手写裸单文件契约程序同样合法——SDK 只是便利品，不引入任何私有机制。 `Shell` 用法：`new Shell()` 后 `run(cmd, instance, shell)` 按 (instance, shell) 复用持久实例；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；同一持久实例内命令按调用顺序执行（one-shot 输出即时写出），哨兵不外泄、非零退出以未捕获异常终止（exit 1），`close()` 与 `process.on('exit')` 保证无孤儿。 `Shell` 用法：`new Shell()` 后 `run(cmd, instance, shell)` 按 (instance, shell) 复用持久实例；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；命令按调用顺序执行，哨兵不外泄、非零退出抛错，`close()` 与 `process.on('exit')` 保证无孤儿。
+`hire init --lang node` 生成两个文件：`hire.js`（契约 SDK——__hire__ 分发、discover JSON 输出、HIRE_ARGS 解析收在 SDK 模块里）和只含任务本体的瘦 `Taskfile.js`。声明助手：`opt`/`req`（string，可选/必填）、`flag`（bool）、`num`（数字，dispatch 时转 Number）；`a.name` 属性访问，`a._` 为位置参数数组。平台过滤用 `task("x", { desc: "...", args: {...}, when: { os: "windows" } }, fn)`（或 `when: { os: ["linux","darwin"] }`）。手写裸单文件契约程序同样合法——SDK 只是便利品，不引入任何私有机制。 `Shell` 用法：`new Shell()` 后 `run(cmd, instance, shell)` 按 (instance, shell) 复用持久实例；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；同一持久实例内命令按调用顺序执行（one-shot 输出即时写出），哨兵不外泄、非零退出以未捕获异常终止（exit 1），`close()` 与 `process.on('exit')` 保证无孤儿。 `Shell` 用法：`new Shell()` 后 `run(cmd, instance, shell)` 按 (instance, shell) 复用持久实例；`instance=0` 收集导出命令，`shell:` 前缀与显式 `shell` 走 one-shot；命令按调用顺序执行，哨兵不外泄、非零退出抛错，`close()` 与 `process.on('exit')` 保证无孤儿。
 
 `hire.js`：
 
@@ -525,10 +532,10 @@ const { spawn, spawnSync } = require("child_process");
 const _registry = new Map();
 
 function task(name, opts, fn) {
-  _registry.set(name, {
-    spec: { name: name, desc: (opts && opts.desc) || "", args: (opts && opts.args) || {} },
-    fn: fn,
-  });
+  const spec = { name: name, desc: (opts && opts.desc) || "", args: (opts && opts.args) || {} };
+  // when is an optional discover guard: { os: "windows" } or { os: ["linux", "darwin"] }.
+  if (opts && opts.when) spec.when = opts.when;
+  _registry.set(name, { spec: spec, fn: fn });
 }
 
 function opt(desc) { return { type: "string", required: false, desc: desc || "" }; }
@@ -877,6 +884,11 @@ void build(std::string target = "app", int opt = 2, double scale = 1.5) {
               << " -o " << target << " main.cpp\n";
 }
 ```
+
+函数形式也支持平台过滤：在函数上方的注释块里加一行 `// when: windows`（或
+`// when: linux`、`// when: darwin` 等 Go 平台名），hire 解析后按当前平台过滤——
+不匹配的任务不进包装 TU、discover 里也不出现；未知平台名加载期报错，避免拼写错误
+静默隐藏任务。`// when:` 行可以放在 `desc:` 之后。
 
 **hpp 链式形态（合法遗留）**：v2.0.x 的写法继续有效——include hire.hpp、在
 hire_main 里注册。文件定义 `hire_main` 或含 `__hire__` 字样时走该 raw 契约路径（函数形式文件可 include hire.hpp 用 `hire::sh`，但不定义 hire_main，故仍走函数形式）

@@ -1,6 +1,7 @@
 package adapter_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -338,4 +339,119 @@ func TestExecNodeRoundTrip(t *testing.T) {
 	if string(got) != trickyArgs {
 		t.Errorf("node HIRE_ARGS round trip:\n got %q\nwant %q", string(got), trickyArgs)
 	}
+}
+
+// TestExecWhenOS: a discover task may declare when.os (string or array).
+// hire filters at load time, so a non-matching task does not exist at all
+// (ls hides it, run reports not found) while a matching one loads normally.
+func TestExecWhenOS(t *testing.T) {
+	t.Setenv("FAKE_MODE", "when")
+	path := filepath.Join(t.TempDir(), "Taskfile.fake")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := adapter.LoadExec(path, adapter.RuntimeSpec{Cmd: fakeInterp()}, "fake")
+	if err != nil {
+		t.Fatalf("LoadExec: %v", err)
+	}
+	t.Cleanup(f.Close)
+
+	wantWin := goruntime.GOOS == "windows"
+	wantLinux := goruntime.GOOS == "linux"
+	if _, ok := f.Tasks["winonly"]; ok != wantWin {
+		t.Errorf("winonly present = %v, want %v (tasks %v)", ok, wantWin, f.Order)
+	}
+	if _, ok := f.Tasks["linuxonly"]; ok != wantLinux {
+		t.Errorf("linuxonly present = %v, want %v (tasks %v)", ok, wantLinux, f.Order)
+	}
+	if _, ok := f.Tasks["here"]; !ok {
+		t.Errorf("task with the current os must exist (tasks %v)", f.Order)
+	}
+	if _, ok := f.Tasks["multi"]; !ok {
+		t.Errorf("task whose os array contains the current os must exist (tasks %v)", f.Order)
+	}
+	if _, ok := f.Tasks["gone"]; ok {
+		t.Errorf("non-matching when.os must hide the task (tasks %v)", f.Order)
+	}
+	wantCount := 2 // here + multi on any other platform
+	if wantWin || wantLinux {
+		wantCount = 3
+	}
+	if len(f.Order) != wantCount {
+		t.Errorf("Order = %v, want %d matching tasks", f.Order, wantCount)
+	}
+}
+
+// checkSDKWhenTasks asserts the platform filter on tasks declared through
+// an SDK's task(..., when=...), not just hand-written discover JSON.
+func checkSDKWhenTasks(t *testing.T, f *adapter.File) {
+	t.Helper()
+	wantWin := goruntime.GOOS == "windows"
+	wantLinux := goruntime.GOOS == "linux"
+	if _, ok := f.Tasks["win"]; ok != wantWin {
+		t.Errorf("win present = %v, want %v (tasks %v)", ok, wantWin, f.Order)
+	}
+	if _, ok := f.Tasks["linux"]; ok != wantLinux {
+		t.Errorf("linux present = %v, want %v (tasks %v)", ok, wantLinux, f.Order)
+	}
+	if _, ok := f.Tasks["here"]; !ok {
+		t.Errorf("current-os task must exist (tasks %v)", f.Order)
+	}
+}
+
+func TestExecPythonSDKWhenOS(t *testing.T) {
+	py := probeCmd(t, "python3", "python")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hire.py"), []byte(adapter.PythonSDKTemplate), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := fmt.Sprintf(`from hire import task
+
+@task("win", desc="windows only", when={"os": "windows"})
+def win(a): pass
+
+@task("linux", desc="linux only", when={"os": "linux"})
+def linux(a): pass
+
+@task("here", desc="current os", when={"os": %q})
+def here(a): pass
+
+import hire
+if __name__ == "__main__":
+    hire.dispatch()
+`, goruntime.GOOS)
+	path := filepath.Join(dir, "Taskfile.py")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := adapter.LoadExec(path, adapter.RuntimeSpec{Cmd: py}, "python")
+	if err != nil {
+		t.Fatalf("LoadExec: %v", err)
+	}
+	t.Cleanup(f.Close)
+	checkSDKWhenTasks(t, f)
+}
+
+func TestExecNodeSDKWhenOS(t *testing.T) {
+	node := probeCmd(t, "node")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hire.js"), []byte(adapter.NodeSDKTemplate), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := fmt.Sprintf(`const { task, dispatch } = require("./hire.js");
+task("win", { desc: "windows only", when: { os: "windows" } }, function (a) {});
+task("linux", { desc: "linux only", when: { os: "linux" } }, function (a) {});
+task("here", { desc: "current os", when: { os: %q } }, function (a) {});
+dispatch();
+`, goruntime.GOOS)
+	path := filepath.Join(dir, "Taskfile.js")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := adapter.LoadExec(path, adapter.RuntimeSpec{Cmd: node}, "node")
+	if err != nil {
+		t.Fatalf("LoadExec: %v", err)
+	}
+	t.Cleanup(f.Close)
+	checkSDKWhenTasks(t, f)
 }

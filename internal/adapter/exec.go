@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -26,12 +27,20 @@ type discoverTask struct {
 	Name string                 `json:"name"`
 	Desc string                 `json:"desc"`
 	Args map[string]discoverArg `json:"args"`
+	When *discoverWhen          `json:"when"`
 }
 
 type discoverArg struct {
 	Type     string `json:"type"`
 	Required bool   `json:"required"`
 	Desc     string `json:"desc"`
+}
+
+// discoverWhen is the optional platform guard on a discovered task.
+// Unknown os values simply never match, like Lua/TOML when.os; a malformed
+// guard (no string/array os) is a load error.
+type discoverWhen struct {
+	OS interface{} `json:"os"`
 }
 
 // LoadExec loads an external taskfile through the __hire__ contract:
@@ -101,6 +110,16 @@ func fileFromDiscover(path string, dj *discoverJSON, prog string, extra []string
 	L := lua.NewState()
 	f := &File{L: L, Tasks: make(map[string]*Task)}
 	for _, dt := range dj.Tasks {
+		if dt.When != nil {
+			match, werr := whenMatchesDiscover(dt.When)
+			if werr != nil {
+				f.Close()
+				return nil, fmt.Errorf("%s: task %q: %v", path, dt.Name, werr)
+			}
+			if !match {
+				continue // platform filtered out: the task does not exist
+			}
+		}
 		if strings.HasPrefix(dt.Name, "__") {
 			f.Close()
 			return nil, fmt.Errorf("%s: task name %q must not start with __ (reserved for contract verbs)", path, dt.Name)
@@ -142,6 +161,26 @@ func fileFromDiscover(path string, dj *discoverJSON, prog string, extra []string
 	}
 	sort.Strings(f.Order)
 	return f, nil
+}
+
+// whenMatchesDiscover applies a discover task's when.os guard against
+// the current platform. A string must equal runtime.GOOS; an array
+// matches when any element does. Unknown os strings never match (same
+// as the Lua/TOML adapters), so the task simply does not exist here.
+func whenMatchesDiscover(w *discoverWhen) (bool, error) {
+	switch osv := w.OS.(type) {
+	case string:
+		return osv == runtime.GOOS, nil
+	case []interface{}:
+		for _, e := range osv {
+			if s, ok := e.(string); ok && s == runtime.GOOS {
+				return true, nil
+			}
+		}
+		return false, nil
+	default:
+		return false, fmt.Errorf("'when' requires os (string or array of strings)")
+	}
 }
 
 // runDiscover executes `<prog> <extra...> __hire__ discover`,

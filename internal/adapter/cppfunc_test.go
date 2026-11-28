@@ -7,8 +7,10 @@ package adapter_test
 // toolchains are absent.
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -333,6 +335,11 @@ func TestCppFuncFormValidationErrors(t *testing.T) {
 			[]string{`function "calc"`, `parameter "depth"`, "not a simple literal"},
 		},
 		{
+			"unknown when os",
+			"// desc: bad\n// when: not-an-os\nvoid bad() {}\n",
+			[]string{`function "bad"`, "when", "not-an-os"},
+		},
+		{
 			"all helpers, no tasks",
 			"static void a() {}\nnamespace { void b() {} }\n",
 			[]string{"no task functions found"},
@@ -403,5 +410,56 @@ func TestCppParserConfiguredMissing(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q missing %q", err.Error(), want)
 		}
+	}
+}
+
+// TestCppFuncFormWhenOS drives the function form with // when: <os>
+// comments: a task for another platform is filtered before the wrapper
+// is generated (so it is absent from discover and unrunnable), while a
+// matching one goes through the full parse -> build -> discover chain.
+func TestCppFuncFormWhenOS(t *testing.T) {
+	clang := probeCmd(t, "clang++", "clang")
+	probeCmd(t, "g++")
+	spacedCacheDir(t)
+	path := filepath.Join(t.TempDir(), "Taskfile.cpp")
+	src := fmt.Sprintf(`// desc: windows only
+// when: windows
+void winonly() {}
+
+// desc: linux only
+// when: linux
+void linuxonly() {}
+
+// desc: current platform
+// when: %s
+void here() {}
+`, goruntime.GOOS)
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := adapter.RuntimeSpec{Build: "g++ -std=c++20 -O2 -o {out} {src}", Parser: clang}
+	f, err := adapter.LoadExec(path, spec, "cpp")
+	if err != nil {
+		t.Fatalf("LoadExec: %v", err)
+	}
+	t.Cleanup(f.Close)
+
+	wantWin := goruntime.GOOS == "windows"
+	wantLinux := goruntime.GOOS == "linux"
+	if _, ok := f.Tasks["winonly"]; ok != wantWin {
+		t.Errorf("winonly present = %v, want %v (tasks %v)", ok, wantWin, f.Order)
+	}
+	if _, ok := f.Tasks["linuxonly"]; ok != wantLinux {
+		t.Errorf("linuxonly present = %v, want %v (tasks %v)", ok, wantLinux, f.Order)
+	}
+	if got := f.Tasks["here"].Desc; got != "current platform" {
+		t.Errorf("here.Desc = %q, want the doc comment's desc (comment parsing must skip the when line)", got)
+	}
+	wantCount := 1 // here on any other platform
+	if wantWin || wantLinux {
+		wantCount = 2
+	}
+	if len(f.Order) != wantCount {
+		t.Errorf("Order = %v, want %d tasks", f.Order, wantCount)
 	}
 }
