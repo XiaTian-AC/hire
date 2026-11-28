@@ -20,7 +20,7 @@ type initFile struct{ file, tmpl string }
 var initLangs = map[string][]initFile{
 	"lua":    {{"Taskfile.lua", adapter.LuaTemplate}},
 	"python": {{"hire.py", adapter.PythonSDKTemplate}, {"Taskfile.py", adapter.PythonTemplate}},
-	"node":   {{"Taskfile.js", adapter.NodeTemplate}},
+	"node":   {{"hire.js", adapter.NodeSDKTemplate}, {"Taskfile.js", adapter.NodeTemplate}},
 	"cpp":    {{"Taskfile.cpp", adapter.CppTemplate}},
 }
 

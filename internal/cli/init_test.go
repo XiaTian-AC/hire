@@ -218,6 +218,117 @@ if __name__ == "__main__":
 	}
 }
 
+// TestNodeSDKArgForms drives the decorator-free SDK through the real
+// node runtime: registration order in discover, req/flag/num helpers,
+// positional args in a._, num coercion to Number, and unknown tasks.
+func TestNodeSDKArgForms(t *testing.T) {
+	node := probePath(t, "node")
+	t.Chdir(t.TempDir())
+	d, out, errOut := setupEnv(t, "")
+	writeRuntimesConfig(t, "node", node)
+	if err := os.WriteFile("hire.js", []byte(adapter.NodeSDKTemplate), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const taskfile = `const { task, req, flag, num, dispatch } = require("./hire.js");
+function fail(msg) { process.stderr.write(msg + "\n"); process.exit(3); }
+task("zebra", { desc: "first registered", args: { who: req("who to greet") } }, (a) => {
+  if (a.who !== "dk") fail("who=" + a.who);
+});
+task("alpha", { desc: "flag plus positionals", args: { loud: flag("shout") } }, (a) => {
+  if (a.loud !== true) fail("loud=" + a.loud);
+  if (JSON.stringify(a._) !== JSON.stringify(["pos", "args"])) fail("_=" + JSON.stringify(a._));
+});
+task("probe", { desc: "num round trip", args: { port: num("listen port") } }, (a) => {
+  if (a.port !== 8080 || typeof a.port !== "number") fail("port=" + a.port);
+});
+dispatch();
+`
+	if err := os.WriteFile("Taskfile.js", []byte(taskfile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	discover := exec.Command(node, "Taskfile.js", "__hire__", "discover")
+	discover.Stdout = &buf
+	if err := discover.Run(); err != nil {
+		t.Fatalf("__hire__ discover: %v\n%s", err, buf.String())
+	}
+	var dj struct {
+		Tasks []struct {
+			Name string `json:"name"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &dj); err != nil {
+		t.Fatalf("discover JSON: %v\n%s", err, buf.String())
+	}
+	names := make([]string, 0, len(dj.Tasks))
+	for _, task := range dj.Tasks {
+		names = append(names, task.Name)
+	}
+	if want := []string{"zebra", "alpha", "probe"}; !slices.Equal(names, want) {
+		t.Fatalf("discover order = %v, want %v", names, want)
+	}
+	if !strings.Contains(buf.String(), `"desc":"who to greet"`) {
+		t.Fatalf("arg desc missing from discover JSON: %s", buf.String())
+	}
+
+	for _, argv := range [][]string{
+		{"zebra", "--who", "dk"},
+		{"alpha", "pos", "args", "--loud"},
+		{"probe", "--port", "8080"},
+	} {
+		out.Reset()
+		if code := Run(argv, d); code != 0 {
+			t.Fatalf("Run(%q): code=%d out=%q err=%q", argv, code, out.String(), errOut.String())
+		}
+	}
+
+	buf.Reset()
+	run := exec.Command(node, "Taskfile.js", "__hire__", "run", "nope")
+	run.Stdout, run.Stderr = &buf, &buf
+	if err := run.Run(); err == nil {
+		t.Fatal("__hire__ run nope should exit nonzero")
+	} else if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 {
+		t.Fatalf("__hire__ run nope: %v (want exit 1)", err)
+	}
+	if !strings.Contains(buf.String(), "unknown task") {
+		t.Fatalf("run nope stderr: %q", buf.String())
+	}
+}
+
+// TestInitNodeScaffold pins the SDK pair: hire init --lang node must
+// write hire.js (the decorator-free SDK) plus a thin Taskfile.js that
+// only registers tasks. The SDK text is checked without a node on PATH
+// so generation itself stays toolchain-independent.
+func TestInitNodeScaffold(t *testing.T) {
+	t.Chdir(t.TempDir())
+	d, _, errOut := setupEnv(t, "")
+
+	code := Run([]string{"init", "--lang", "node"}, d)
+	if code != 0 {
+		t.Fatalf("init --lang node: code=%d err=%q", code, errOut.String())
+	}
+	for _, file := range []string{"hire.js", "Taskfile.js"} {
+		if _, err := os.Stat(file); err != nil {
+			t.Fatalf("%s not created: %v", file, err)
+		}
+	}
+	sdk, err := os.ReadFile("hire.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sdk), "function task(") {
+		t.Errorf("hire.js must define function task(: %q", string(sdk))
+	}
+	taskfile, err := os.ReadFile("Taskfile.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(taskfile), `require("./hire.js")`) || !strings.Contains(string(taskfile), "dispatch()") {
+		t.Errorf("Taskfile.js must be a thin SDK client: %q", string(taskfile))
+	}
+}
+
 // TestContractPythonListings pins the byte-identity rule: the Python
 // SDK listings in docs/contract.md must reprint the templates.go
 // constants verbatim. CRLF from an autocrlf checkout is normalized —
@@ -245,6 +356,39 @@ func TestContractPythonListings(t *testing.T) {
 	for _, tmpl := range []struct{ name, body string }{
 		{"PythonSDKTemplate", adapter.PythonSDKTemplate},
 		{"PythonTemplate", adapter.PythonTemplate},
+	} {
+		if !strings.Contains(normalized, tmpl.body) {
+			t.Errorf("docs/contract.md must reprint %s verbatim (starting %q)", tmpl.name, strings.SplitN(tmpl.body, "\n", 2)[0])
+		}
+	}
+}
+
+// TestContractNodeListings pins the Node byte-identity rule: hire.js
+// (the SDK) and the thin Taskfile.js must reprint the templates.go
+// constants verbatim. CRLF from an autocrlf checkout is normalized.
+func TestContractNodeListings(t *testing.T) {
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Skip("go.mod not found; running outside the module")
+		}
+		dir = parent
+	}
+	doc, err := os.ReadFile(filepath.Join(dir, "docs", "contract.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized := strings.ReplaceAll(string(doc), "\r\n", "\n")
+	for _, tmpl := range []struct{ name, body string }{
+		{"NodeSDKTemplate", adapter.NodeSDKTemplate},
+		{"NodeTemplate", adapter.NodeTemplate},
 	} {
 		if !strings.Contains(normalized, tmpl.body) {
 			t.Errorf("docs/contract.md must reprint %s verbatim (starting %q)", tmpl.name, strings.SplitN(tmpl.body, "\n", 2)[0])
@@ -290,7 +434,7 @@ func TestContractCppListings(t *testing.T) {
 func TestInitGeneratesAllLangs(t *testing.T) {
 	for lang, files := range map[string][]string{
 		"python": {"hire.py", "Taskfile.py"},
-		"node":   {"Taskfile.js"},
+		"node":   {"hire.js", "Taskfile.js"},
 		"cpp":    {"Taskfile.cpp"},
 	} {
 		t.Run(lang, func(t *testing.T) {

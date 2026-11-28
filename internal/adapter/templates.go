@@ -164,55 +164,106 @@ if __name__ == "__main__":
     hire.dispatch()
 `
 
-// NodeTemplate embeds the __hire__ contract for the node runtime.
-// (No template literals: the constant is a Go raw string.)
-const NodeTemplate = `#!/usr/bin/env node
-// hire Taskfile.js - a taskfile is any program speaking the __hire__ contract.
+// NodeSDKTemplate is hire.js, the decorator-free __hire__ contract SDK
+// for Node taskfiles: a flat registry, the arg-declaration helpers and
+// dispatch() for the two contract verbs. Edit together with
+// NodeTemplate and the Node listings in docs/contract.md — they must
+// stay identical. (No template literals: this is a Go raw string.)
+const NodeSDKTemplate = `// hire.js - the hire contract SDK for Node taskfiles.
 //
-// hire calls it two ways:
+// A taskfile is any program speaking the __hire__ contract; this SDK is a
+// convenience, not a requirement. Two legal shapes:
+//
+//   SDK (what hire init --lang node scaffolds): keep this hire.js beside
+//   a thin Taskfile.js that only registers tasks:
+//
+//       const { task, opt, dispatch } = require("./hire.js");
+//       task("hello", { desc: "say hello", args: { name: opt("who") } },
+//            (a) => { console.log("hello, " + (a.name || "hire")); });
+//       dispatch();
+//
+//   Raw single-file: write the two __hire__ verbs by hand in one program
+//   (a full listing lives in docs/contract.md) - hire.js adds no private
+//   mechanism, only boilerplate you would otherwise retype.
+//
+// hire calls your program two ways:
 //   node Taskfile.js __hire__ discover     -> print {"tasks": [...]} to stdout
 //   node Taskfile.js __hire__ run <name>   -> run the task
 // Parsed CLI arguments arrive as JSON in the HIRE_ARGS environment variable:
-// {"name": "v2", "_": ["positional"]} - flags plus the "_" positional array,
-// {} when the task declares no args. Full contract: docs/contract.md.
+// {"name": "v2", "port": 8080, "_": ["positional"]} - flags plus the "_"
+// positional array, {} when the task declares no args.
 //
 // discover must stay pure: describe tasks, no side effects.
+"use strict";
 
-const tasks = [
-  {
-    name: "hello",
-    desc: "say hello (edit me)",
-    args: {
-      name: { type: "string", required: false, desc: "who to greet" },
-    },
-  },
-];
+const _registry = new Map();
 
-const verb = process.argv[2];
-const action = process.argv[3];
-const name = process.argv[4];
-
-if (verb !== "__hire__") {
-  process.stderr.write("this file is a hire taskfile; run its tasks via the hire CLI\n");
-  process.exit(1);
+function task(name, opts, fn) {
+  _registry.set(name, {
+    spec: { name: name, desc: (opts && opts.desc) || "", args: (opts && opts.args) || {} },
+    fn: fn,
+  });
 }
 
-if (action === "discover") {
-  process.stdout.write(JSON.stringify({ tasks }));
-  process.exit(0);
+function opt(desc) { return { type: "string", required: false, desc: desc || "" }; }
+function req(desc) { return { type: "string", required: true, desc: desc || "" }; }
+function flag(desc) { return { type: "bool", required: false, desc: desc || "" }; }
+function num(desc) { return { type: "num", required: false, desc: desc || "" }; }
+
+function dispatch() {
+  const verb = process.argv[2];
+  const action = process.argv[3];
+  const name = process.argv[4];
+  if (verb !== "__hire__") {
+    process.stderr.write("this file is a hire taskfile; run its tasks via the hire CLI\n");
+    process.exit(1);
+  }
+  if (action === "discover") {
+    const tasks = [];
+    for (const entry of _registry.values()) tasks.push(entry.spec);
+    process.stdout.write(JSON.stringify({ tasks: tasks }));
+    return;
+  }
+  if (action !== "run" || !name) {
+    process.stderr.write("usage: Taskfile.js __hire__ discover | run <name>\n");
+    process.exit(1);
+  }
+  const entry = _registry.get(name);
+  if (!entry) {
+    process.stderr.write("hire: unknown task " + name + "\n");
+    process.exit(1);
+  }
+  let raw;
+  try {
+    raw = JSON.parse(process.env.HIRE_ARGS || "{}");
+  } catch (e) {
+    process.stderr.write("hire: invalid HIRE_ARGS: " + e.message + "\n");
+    process.exit(1);
+  }
+  for (const key of Object.keys(entry.spec.args)) {
+    if (entry.spec.args[key].type === "num" && raw[key] !== undefined) {
+      raw[key] = Number(raw[key]);
+    }
+  }
+  const a = Object.assign({}, raw);
+  a._ = raw._ || [];
+  entry.fn(a);
 }
 
-if (action !== "run" || !name) {
-  process.stderr.write("usage: Taskfile.js __hire__ discover | run <name>\n");
-  process.exit(1);
-}
+module.exports = { task, opt, req, flag, num, dispatch };
+`
 
-const args = JSON.parse(process.env.HIRE_ARGS || "{}");
-if (name !== "hello") {
-  process.stderr.write("hire: unknown task " + name + "\n");
-  process.exit(1);
-}
-process.stdout.write("hello, " + (args.name || "hire") + "\n");
+// NodeTemplate is the user-facing thin taskfile paired with
+// NodeSDKTemplate (hire.js): only the tasks - the contract, the arg
+// parsing and even the __hire__ verbs live in the SDK module.
+const NodeTemplate = `const { task, opt, dispatch } = require("./hire.js");
+
+task("hello", { desc: "say hello (edit me)", args: { name: opt("who to greet") } },
+  (a) => {
+    process.stdout.write("hello, " + (a.name || "hire") + "\n");
+  });
+
+dispatch();
 `
 
 // CppHeaderTemplate is hire.hpp, the __hire__ contract SDK for C++
