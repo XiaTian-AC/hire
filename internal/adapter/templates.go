@@ -71,8 +71,12 @@ positional array, {} when the task declares no args.
 discover must stay pure: describe tasks, no side effects.
 """
 
+import atexit
 import json
 import os
+import secrets
+import shutil
+import subprocess
 import sys
 
 # registry maps task name -> (spec, fn). Insertion-ordered: discover
@@ -127,8 +131,206 @@ class Args:
         return self._raw.get(name, default)
 
 
+# --- persistent shell instances (ported from the Lua x.sh protocol) ---
+# Shell.run shares one shell process per (instance, shell) so "cd" and
+# "export" survive across calls; instance=0 collects commands for
+# eval/iex, a builtin "shell:" prefix and an explicit shell= run one-shot,
+# a non-zero exit raises, and every child is torn down at task end.
+
+_BUILTIN_SHELLS = ("pwsh", "bash", "sh")
+_INSTANCE_CLOSE_WAIT = 0.5
+_instances = {}          # (instance, shell) -> _Instance
+_export_buf = []
+_task_failed = False
+_warned = False
+
+
+class ShellError(Exception):
+    """A shell command failed or its persistent instance died."""
+
+
+def _default_shell():
+    return os.environ.get("HIRE_SHELL") or ("pwsh" if os.name == "nt" else "bash")
+
+
+def _resolve_shell(name):
+    if name == "pwsh":
+        for candidate in ("pwsh", "pwsh.exe", "powershell", "powershell.exe"):
+            path = shutil.which(candidate)
+            if path:
+                return path
+        raise ShellError("shell pwsh not found in PATH")
+    if name == "bash" and os.name == "nt":
+        # bash.exe on PATH is often the WSL launcher; prefer Git Bash.
+        git = shutil.which("git")
+        if git:
+            candidate = os.path.join(os.path.dirname(os.path.dirname(git)), "bin", "bash.exe")
+            if os.path.isfile(candidate):
+                return candidate
+    if name in _BUILTIN_SHELLS:
+        for candidate in (name, name + ".exe"):
+            path = shutil.which(candidate)
+            if path:
+                return path
+        raise ShellError("shell %s not found in PATH" % name)
+    return shutil.which(name) or name   # third-party: one-shot via PATH
+
+
+def _one_shot_argv(name, cmd):
+    if name == "pwsh":
+        return [_resolve_shell(name), "-NoProfile", "-Command", cmd]
+    if name == "bash":
+        return [_resolve_shell(name), "-euo", "pipefail", "-c", cmd]
+    if name == "sh":
+        return [_resolve_shell(name), "-e", "-c", cmd]
+    return [_resolve_shell(name), "-c", cmd]
+
+
+def _persistent_argv(name):
+    if name == "pwsh":
+        return [_resolve_shell(name), "-NoProfile", "-NonInteractive", "-Command", "-"]
+    if name == "bash":
+        return [_resolve_shell(name), "--norc", "--noprofile", "-s"]
+    if name == "sh":
+        return [_resolve_shell(name), "-s"]
+    return [_resolve_shell(name), "-c"]
+
+
+def _warn_once(name):
+    global _warned
+    if _warned:
+        return
+    _warned = True
+    if name not in _BUILTIN_SHELLS:
+        sys.stderr.write("hire: warning: shell %r does not support persistent instances; running one-shot\n" % name)
+    else:
+        sys.stderr.write("hire: warning: pwsh persistent instances are Windows-only; running one-shot\n")
+
+
+def _split_shell_prefix(cmd):
+    head, sep, rest = cmd.partition(":")
+    if sep and head in _BUILTIN_SHELLS:
+        return head, rest
+    return None, cmd
+
+
+def _one_shot(name, cmd):
+    rc = subprocess.Popen(_one_shot_argv(name, cmd)).wait()
+    if rc != 0:
+        raise ShellError("command failed (exit %d): %s" % (rc, cmd))
+
+
+class _Instance:
+    def __init__(self, name):
+        self.name = name
+        self.proc = subprocess.Popen(_persistent_argv(name), stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE)
+        self.closed = False
+        if name == "pwsh":
+            # $LASTEXITCODE is unset until the first native command runs.
+            self.proc.stdin.write(b"$LASTEXITCODE = 0\n")
+            self.proc.stdin.flush()
+
+    def send(self, cmd):
+        nonce = secrets.token_hex(8)
+        prefix = "__HIRE_RC:" + nonce + ":"
+        if self.name == "pwsh":
+            echo = 'Write-Output "__HIRE_RC:' + nonce + ':$(if ($?) { $LASTEXITCODE } else { 1 })"'
+        else:
+            echo = "printf '__HIRE_RC:%s:%s\\n' " + nonce + ' "$?"'
+        try:
+            self.proc.stdin.write((cmd + "\n" + echo + "\n").encode("utf-8"))
+            self.proc.stdin.flush()
+        except (OSError, ValueError):
+            raise ShellError("shell instance died while running: " + cmd)
+        while True:
+            raw = self.proc.stdout.readline()
+            if not raw:
+                raise ShellError("shell instance exited before reporting status: " + cmd)
+            line = raw.decode("utf-8", "replace").rstrip("\r\n")
+            if line.startswith(prefix):
+                try:
+                    return int(line[len(prefix):])
+                except ValueError:
+                    continue
+            if line:
+                sys.stdout.write(line + "\n")
+                sys.stdout.flush()
+
+    def teardown(self):
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.proc.wait(timeout=_INSTANCE_CLOSE_WAIT)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            self.proc.wait()
+
+
+class Shell:
+    """A family of persistent shell instances; close() tears them all down."""
+
+    def run(self, cmd, instance=1, shell=None):
+        if not isinstance(instance, int) or isinstance(instance, bool) or instance < 0:
+            raise ShellError("Shell.run: instance must be an integer >= 0")
+        name, rest = _split_shell_prefix(cmd)
+        if name:
+            _one_shot(name, rest)
+            return
+        name = shell or _default_shell()
+        if instance == 0:
+            if name not in _BUILTIN_SHELLS:
+                raise ShellError("instance=0 (export mode) needs a builtin shell (pwsh/bash/sh)")
+            _export_buf.append(cmd)
+            return
+        if shell or name not in _BUILTIN_SHELLS or (name == "pwsh" and os.name != "nt"):
+            _warn_once(name)
+            _one_shot(name, cmd)
+            return
+        key = (instance, name)
+        inst = _instances.get(key)
+        if inst is None:
+            inst = _Instance(name)
+            _instances[key] = inst
+        rc = inst.send(cmd)
+        if rc != 0:
+            raise ShellError("command failed (exit %d): %s" % (rc, cmd))
+
+    def close(self):
+        for inst in _instances.values():
+            inst.teardown()
+        _instances.clear()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
+
+def _teardown():
+    for inst in _instances.values():
+        inst.teardown()
+    _instances.clear()
+    if _task_failed and _export_buf:
+        sys.stderr.write("hire: task failed; export aborted, collected commands discarded\n")
+    elif _export_buf:
+        sys.stdout.write("\n".join(_export_buf) + "\n")
+    _export_buf.clear()
+
+
+atexit.register(_teardown)
+
+
 def dispatch():
     """Handle the __hire__ contract verbs for the registered tasks."""
+    global _task_failed
     if len(sys.argv) < 3 or sys.argv[1] != "__hire__":
         sys.exit("this file is a hire taskfile; run its tasks via the hire CLI")
     if sys.argv[2] == "discover":
@@ -145,7 +347,11 @@ def dispatch():
             # int; declared num args are coerced to floats here.
             if decl.get("type") == "num" and type(raw.get(arg)) is int:
                 raw[arg] = float(raw[arg])
-        fn(Args(raw))
+        try:
+            fn(Args(raw))
+        except BaseException:
+            _task_failed = True
+            raise
         return
     sys.exit("usage: Taskfile.py __hire__ discover | run <name>")
 `
@@ -196,6 +402,11 @@ const NodeSDKTemplate = `// hire.js - the hire contract SDK for Node taskfiles.
 // discover must stay pure: describe tasks, no side effects.
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const { spawn, spawnSync } = require("child_process");
+
 const _registry = new Map();
 
 function task(name, opts, fn) {
@@ -209,6 +420,228 @@ function opt(desc) { return { type: "string", required: false, desc: desc || "" 
 function req(desc) { return { type: "string", required: true, desc: desc || "" }; }
 function flag(desc) { return { type: "bool", required: false, desc: desc || "" }; }
 function num(desc) { return { type: "num", required: false, desc: desc || "" }; }
+
+// --- persistent shell instances (ported from the Lua x.sh protocol) ---
+// Shell.run shares one shell process per (instance, shell); a builtin
+// "shell:" prefix and an explicit shell= run one-shot; instance=0
+// collects commands for eval/iex. Commands are queued to the child in
+// call order; the sentinel line carries the exit code and is never
+// printed. dispatch drains every instance before the process exits.
+
+const BUILTIN_SHELLS = ["pwsh", "bash", "sh"];
+const _instances = new Map();     // key: instance + ":" + shell
+let _exportBuf = [];
+let _taskFailed = false;
+let _warned = false;
+let _finishing = false;
+let _finishDone = false;
+
+function _which(name) {
+  const dirs = (process.env.PATH || "").split(path.delimiter);
+  const names = process.platform === "win32" ? [name, name + ".exe", name + ".cmd", name + ".bat"] : [name];
+  for (const dir of dirs) {
+    for (const candidate of names) {
+      const full = path.join(dir, candidate);
+      try { fs.accessSync(full, fs.constants.X_OK); return full; } catch (e) { /* keep looking */ }
+    }
+  }
+  return null;
+}
+
+function _defaultShell() {
+  return process.env.HIRE_SHELL || (process.platform === "win32" ? "pwsh" : "bash");
+}
+
+function _resolveShell(name) {
+  if (name === "pwsh") {
+    for (const c of ["pwsh.exe", "pwsh", "powershell.exe", "powershell"]) {
+      const p = _which(c);
+      if (p) return p;
+    }
+    throw new Error("shell pwsh not found in PATH");
+  }
+  if (name === "bash" && process.platform === "win32") {
+    // bash.exe on PATH is often the WSL launcher; prefer Git Bash.
+    const git = _which("git");
+    if (git) {
+      const candidate = path.join(path.dirname(path.dirname(git)), "bin", "bash.exe");
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  if (BUILTIN_SHELLS.indexOf(name) >= 0) {
+    const p = _which(name);
+    if (p) return p;
+    throw new Error("shell " + name + " not found in PATH");
+  }
+  return _which(name) || name;   // third-party: one-shot via PATH
+}
+
+function _oneShotArgs(name, cmd) {
+  if (name === "pwsh") return ["-NoProfile", "-Command", cmd];
+  if (name === "bash") return ["-euo", "pipefail", "-c", cmd];
+  if (name === "sh") return ["-e", "-c", cmd];
+  return ["-c", cmd];
+}
+
+function _persistentArgs(name) {
+  if (name === "pwsh") return ["-NoProfile", "-NonInteractive", "-Command", "-"];
+  if (name === "bash") return ["--norc", "--noprofile", "-s"];
+  if (name === "sh") return ["-s"];
+  return ["-c"];
+}
+
+function _warnOnce(name) {
+  if (_warned) return;
+  _warned = true;
+  if (BUILTIN_SHELLS.indexOf(name) < 0)
+    process.stderr.write("hire: warning: shell " + name + " does not support persistent instances; running one-shot\n");
+  else
+    process.stderr.write("hire: warning: pwsh persistent instances are Windows-only; running one-shot\n");
+}
+
+function _splitShellPrefix(cmd) {
+  const i = cmd.indexOf(":");
+  if (i > 0 && BUILTIN_SHELLS.indexOf(cmd.slice(0, i)) >= 0) {
+    return { name: cmd.slice(0, i), rest: cmd.slice(i + 1) };
+  }
+  return null;
+}
+
+function _oneShot(name, cmd) {
+  const r = spawnSync(_resolveShell(name), _oneShotArgs(name, cmd), { stdio: "inherit" });
+  if (r.error) throw new Error("Shell: " + r.error.message);
+  if (r.status !== 0) throw new Error("command failed (exit " + r.status + "): " + cmd);
+}
+
+class ShellInstance {
+  constructor(name) {
+    this.name = name;
+    this.proc = spawn(_resolveShell(name), _persistentArgs(name), { stdio: ["pipe", "pipe", "inherit"] });
+    this.buf = "";
+    this.pending = 0;
+    this.closing = false;
+    this.closed = false;
+    this.exited = false;
+    this.prefixes = new Set();
+    this.proc.on("error", (e) => { process.stderr.write("hire: shell: " + e.message + "\n"); });
+    this.proc.stdout.on("data", (chunk) => this._onData(chunk.toString("utf8")));
+    this.proc.on("close", () => {
+      if (this.pending > 0) {
+        _taskFailed = true;
+        throw new Error("shell instance exited before reporting status: " + this.name);
+      }
+      this.exited = true;
+      _maybeFinishDone();
+    });
+    if (name === "pwsh") this.proc.stdin.write("$LASTEXITCODE = 0\n");  // seed
+  }
+
+  _onData(text) {
+    this.buf += text;
+    let i;
+    while ((i = this.buf.indexOf("\n")) >= 0) {
+      const line = this.buf.slice(0, i).replace(/\r$/, "");
+      this.buf = this.buf.slice(i + 1);
+      let sentinel = false;
+      for (const prefix of this.prefixes) {
+        if (line.startsWith(prefix)) {
+          const rest = line.slice(prefix.length);
+          this.prefixes.delete(prefix);
+          this.pending--;
+          sentinel = true;
+          if (/^\d+$/.test(rest) && parseInt(rest, 10) !== 0) {
+            _taskFailed = true;
+            throw new Error("command failed (exit " + parseInt(rest, 10) + ")");
+          }
+          break;
+        }
+      }
+      if (!sentinel && line !== "") fs.writeSync(1, line + "\n");
+      if (this.closing && this.pending === 0) this.teardown();
+    }
+    _maybeFinishDone();
+  }
+
+  send(cmd) {
+    const nonce = crypto.randomBytes(8).toString("hex");
+    const prefix = "__HIRE_RC:" + nonce + ":";
+    const echo = this.name === "pwsh"
+      ? 'Write-Output "__HIRE_RC:' + nonce + ':$(if ($?) { $LASTEXITCODE } else { 1 })"'
+      : "printf '__HIRE_RC:" + nonce + ":%s\\n' \"$?\"";
+    this.prefixes.add(prefix);
+    this.pending++;
+    this.proc.stdin.write(cmd + "\n" + echo + "\n");
+  }
+
+  teardown() {
+    if (this.closed) return;
+    this.closed = true;
+    try { this.proc.stdin.end(); } catch (e) { /* already closed */ }
+    if (this.proc.exitCode === null && this.proc.signalCode === null) this.proc.kill();
+  }
+}
+
+// _maybeFinishDone flushes the instance=0 buffer only after every queued
+// output line has been read, so export text stays ordered and is
+// discarded when a task fails (ctx.go:405-426).
+function _maybeFinishDone() {
+  if (!_finishing || _finishDone) return;
+  for (const inst of _instances.values()) {
+    if (!inst.exited) return;
+  }
+  _finishDone = true;
+  if (_taskFailed && _exportBuf.length) {
+    process.stderr.write("hire: task failed; export aborted, collected commands discarded\n");
+  } else if (_exportBuf.length) {
+    fs.writeSync(1, _exportBuf.join("\n") + "\n");
+  }
+  _exportBuf = [];
+}
+
+function _finishInstances() {
+  _finishing = true;
+  for (const inst of _instances.values()) {
+    inst.closing = true;
+    if (inst.pending === 0) inst.teardown();
+  }
+  _maybeFinishDone();
+}
+
+process.on("exit", () => {
+  for (const inst of _instances.values()) inst.teardown();
+  _instances.clear();
+});
+
+class Shell {
+  run(cmd, instance, shell) {
+    const inst = instance === undefined ? 1 : instance;
+    if (!Number.isInteger(inst) || inst < 0)
+      throw new Error("Shell.run: instance must be an integer >= 0");
+    const prefix = _splitShellPrefix(cmd);
+    if (prefix) { _oneShot(prefix.name, prefix.rest); return; }
+    const name = shell || _defaultShell();
+    if (inst === 0) {
+      if (BUILTIN_SHELLS.indexOf(name) < 0)
+        throw new Error("instance=0 (export mode) needs a builtin shell (pwsh/bash/sh)");
+      _exportBuf.push(cmd);
+      return;
+    }
+    if (shell || BUILTIN_SHELLS.indexOf(name) < 0 || (name === "pwsh" && process.platform !== "win32")) {
+      _warnOnce(name);
+      _oneShot(name, cmd);
+      return;
+    }
+    const key = inst + ":" + name;
+    let child = _instances.get(key);
+    if (!child) {
+      child = new ShellInstance(name);
+      _instances.set(key, child);
+    }
+    child.send(cmd);
+  }
+
+  close() { _finishInstances(); }
+}
 
 function dispatch() {
   const verb = process.argv[2];
@@ -247,10 +680,17 @@ function dispatch() {
   }
   const a = Object.assign({}, raw);
   a._ = raw._ || [];
-  entry.fn(a);
+  try {
+    entry.fn(a);
+  } catch (e) {
+    _taskFailed = true;
+    _finishInstances();
+    throw e;
+  }
+  _finishInstances();
 }
 
-module.exports = { task, opt, req, flag, num, dispatch };
+module.exports = { task, opt, req, flag, num, dispatch, Shell, _instances };
 `
 
 // NodeTemplate is the user-facing thin taskfile paired with
